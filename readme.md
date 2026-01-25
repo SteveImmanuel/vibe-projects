@@ -1,6 +1,8 @@
 # Vibe Projects
 This repo contains **vibe-coded** projects to build some random ideas that I have.
 
+It also acts as my personal benchmarks of the current capability of LLM.
+
 ## Disclaimer
 As the name suggest, these projects are **heavily generated** by AI and I only performed **very limited review** of the codes.
 
