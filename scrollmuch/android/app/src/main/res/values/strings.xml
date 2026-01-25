@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ScrollMuch</string>
+    <string name="accessibility_service_description">Tracks scroll distance across all apps to measure how much you scroll daily. This data stays on your device.</string>
+</resources>
