@@ -40,12 +40,13 @@ android/app/src/main/
 
 The `ScrollAccessibilityService` extends Android's `AccessibilityService` and listens for `TYPE_VIEW_SCROLLED` events system-wide. When any app scrolls:
 
-1. Service receives the scroll event with pixel delta
-2. Converts pixels to meters using device DPI: `meters = pixels / DPI / 39.3701`
-3. Accumulates total in SharedPreferences
-4. Checks date and resets counter at midnight
+1. Service receives the scroll event with pixel deltas (X and Y)
+2. Calculates true distance using Pythagorean theorem: `sqrt(dx² + dy²)`
+3. Converts pixels to meters using device DPI: `meters = pixels / DPI / 39.3701`
+4. Accumulates total in SharedPreferences
+5. Checks date and resets counter at midnight
 
-**Current limitation**: Only tracks vertical scrolling (`scrollDeltaY`). Horizontal and diagonal scrolling are not fully captured.
+Tracks all directions: vertical, horizontal, and diagonal scrolling.
 
 ### Platform Channel
 
@@ -110,10 +111,9 @@ dart run flutter_launcher_icons
 
 ## Known Limitations / Future Improvements
 
-1. **Vertical only** - Currently only tracks `scrollDeltaY`. Could add horizontal + diagonal (Pythagorean distance)
-2. **No history** - Shows only today's total. Model exists for daily history but not implemented
-3. **No charts** - Could add weekly/monthly visualizations
-4. **Momentum counts** - Fling/momentum scrolling counts even after finger lifts (measures content distance, not finger distance)
+1. **No history** - Shows only today's total. Model exists for daily history but not implemented
+2. **No charts** - Could add weekly/monthly visualizations
+3. **Momentum counts** - Fling/momentum scrolling counts even after finger lifts (measures content distance, not finger distance)
 
 ## Technical Notes
 
