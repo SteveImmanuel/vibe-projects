@@ -1,10 +1,14 @@
 {
   "name": "cherry-diff",
   "displayName": "Cherry Diff",
-  "description": "Per-hunk approve/reject UI for AI-generated file edits. Works with any project.",
-  "version": "0.1.0",
+  "description": "Per-hunk approve/reject UI for file edits. Works with any project.",
+  "version": "0.1.1",
   "publisher": "cherry-diff",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SteveImmanuel/cherry-diff"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -19,6 +23,11 @@
     "configuration": {
       "title": "Cherry Diff",
       "properties": {
+        "cherryDiff.autoSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically save files after accepting or rejecting hunks."
+        },
         "cherryDiff.includePaths": {
           "type": "array",
           "items": { "type": "string" },
@@ -159,11 +168,6 @@
           "group": "inline@2"
         },
         {
-          "command": "cherryDiff.openDiff",
-          "when": "view == cherryDiffReview && viewItem == hunk",
-          "group": "inline@3"
-        },
-        {
           "command": "cherryDiff.acceptAllFile",
           "when": "view == cherryDiffReview && viewItem == file",
           "group": "inline@1"
@@ -172,11 +176,6 @@
           "command": "cherryDiff.rejectAllFile",
           "when": "view == cherryDiffReview && viewItem == file",
           "group": "inline@2"
-        },
-        {
-          "command": "cherryDiff.openDiff",
-          "when": "view == cherryDiffReview && viewItem == file",
-          "group": "inline@3"
         }
       ]
     },
