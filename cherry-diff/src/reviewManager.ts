@@ -152,6 +152,7 @@ export class ReviewManager implements vscode.Disposable {
       this.applying = false;
     }
 
+    await this.autoSave(review.uri);
     this._onDidChangeReview.fire();
   }
 
@@ -177,6 +178,7 @@ export class ReviewManager implements vscode.Disposable {
       this.fileReviews.delete(fsPath);
     }
 
+    await this.autoSave(review.uri);
     this._onDidChangeReview.fire();
   }
 
@@ -235,6 +237,24 @@ export class ReviewManager implements vscode.Disposable {
     );
     edit.replace(uri, fullRange, content);
     await vscode.workspace.applyEdit(edit);
+  }
+
+  /**
+   * Save the file if autoSave is enabled in settings.
+   */
+  private async autoSave(uri: vscode.Uri): Promise<void> {
+    const autoSave = vscode.workspace.getConfiguration('cherryDiff').get<boolean>('autoSave', true);
+    if (!autoSave) {
+      return;
+    }
+    try {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      if (doc.isDirty) {
+        await doc.save();
+      }
+    } catch {
+      // File might not exist (deleted)
+    }
   }
 
   async setAllHunks(status: HunkStatus): Promise<void> {
