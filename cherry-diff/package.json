@@ -1,0 +1,241 @@
+{
+  "name": "cherry-diff",
+  "displayName": "Cherry Diff",
+  "description": "Per-hunk approve/reject UI for AI-generated file edits. Works with any project.",
+  "version": "0.1.0",
+  "publisher": "cherry-diff",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Cherry Diff",
+      "properties": {
+        "cherryDiff.includePaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["**/*"],
+          "description": "Glob patterns for files/directories to track (e.g. 'src/**', 'lib/**')."
+        },
+        "cherryDiff.excludePaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [
+            "**/node_modules/**",
+            "**/.venv/**",
+            "**/__pycache__/**",
+            "**/.git/**",
+            "**/.hg/**",
+            "**/.svn/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/out/**",
+            "**/.next/**",
+            "**/.nuxt/**",
+            "**/coverage/**",
+            "**/.cache/**",
+            "**/.tox/**",
+            "**/.mypy_cache/**",
+            "**/.pytest_cache/**",
+            "**/vendor/**",
+            "**/target/**",
+            "**/*.min.js",
+            "**/*.min.css",
+            "**/package-lock.json",
+            "**/yarn.lock",
+            "**/pnpm-lock.yaml",
+            "**/Cargo.lock",
+            "**/poetry.lock",
+            "**/Pipfile.lock",
+            "**/go.sum"
+          ],
+          "description": "Glob patterns for files/directories to exclude from tracking."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "cherryDiff.startReview",
+        "title": "Cherry Diff: Start Review",
+        "icon": "$(search)"
+      },
+      {
+        "command": "cherryDiff.enableTracking",
+        "title": "Enable Tracking",
+        "icon": "$(play)"
+      },
+      {
+        "command": "cherryDiff.disableTracking",
+        "title": "Disable Tracking",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "cherryDiff.acceptHunk",
+        "title": "Accept Hunk",
+        "icon": "$(check)"
+      },
+      {
+        "command": "cherryDiff.rejectHunk",
+        "title": "Reject Hunk",
+        "icon": "$(x)"
+      },
+      {
+        "command": "cherryDiff.acceptAllFile",
+        "title": "Accept All Hunks in File",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "cherryDiff.rejectAllFile",
+        "title": "Reject All Hunks in File",
+        "icon": "$(close-all)"
+      },
+      {
+        "command": "cherryDiff.acceptAll",
+        "title": "Cherry Diff: Accept All Changes"
+      },
+      {
+        "command": "cherryDiff.rejectAll",
+        "title": "Cherry Diff: Reject All Changes"
+      },
+      {
+        "command": "cherryDiff.openDiff",
+        "title": "Open Diff View",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "cherryDiff.editFilters",
+        "title": "Edit Include/Exclude Filters",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "cherryDiff.nextHunk",
+        "title": "Cherry Diff: Next Hunk"
+      },
+      {
+        "command": "cherryDiff.prevHunk",
+        "title": "Cherry Diff: Previous Hunk"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "cherryDiff.startReview",
+          "when": "view == cherryDiffReview",
+          "group": "navigation@1"
+        },
+        {
+          "command": "cherryDiff.enableTracking",
+          "when": "view == cherryDiffReview && !cherryDiff.tracking",
+          "group": "navigation@2"
+        },
+        {
+          "command": "cherryDiff.disableTracking",
+          "when": "view == cherryDiffReview && cherryDiff.tracking",
+          "group": "navigation@2"
+        },
+        {
+          "command": "cherryDiff.editFilters",
+          "when": "view == cherryDiffReview",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "cherryDiff.acceptHunk",
+          "when": "view == cherryDiffReview && viewItem == hunk",
+          "group": "inline@1"
+        },
+        {
+          "command": "cherryDiff.rejectHunk",
+          "when": "view == cherryDiffReview && viewItem == hunk",
+          "group": "inline@2"
+        },
+        {
+          "command": "cherryDiff.openDiff",
+          "when": "view == cherryDiffReview && viewItem == hunk",
+          "group": "inline@3"
+        },
+        {
+          "command": "cherryDiff.acceptAllFile",
+          "when": "view == cherryDiffReview && viewItem == file",
+          "group": "inline@1"
+        },
+        {
+          "command": "cherryDiff.rejectAllFile",
+          "when": "view == cherryDiffReview && viewItem == file",
+          "group": "inline@2"
+        },
+        {
+          "command": "cherryDiff.openDiff",
+          "when": "view == cherryDiffReview && viewItem == file",
+          "group": "inline@3"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "cherryDiff.nextHunk",
+        "key": "alt+]",
+        "when": "cherryDiff.reviewActive"
+      },
+      {
+        "command": "cherryDiff.prevHunk",
+        "key": "alt+[",
+        "when": "cherryDiff.reviewActive"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cherryDiff",
+          "title": "Cherry Diff",
+          "icon": "$(diff)"
+        }
+      ]
+    },
+    "views": {
+      "cherryDiff": [
+        {
+          "id": "cherryDiffReview",
+          "name": "Review"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "cherryDiffReview",
+        "contents": "No changes to review.",
+        "when": "cherryDiff.tracking"
+      },
+      {
+        "view": "cherryDiffReview",
+        "contents": "Tracking is disabled.\n\n[Enable Tracking](command:cherryDiff.enableTracking) to start capturing file changes.",
+        "when": "!cherryDiff.tracking"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/diff": "^6.0.0",
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "diff": "^7.0.0"
+  }
+}
