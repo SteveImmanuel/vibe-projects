@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.3]
+
+### Changed
+- Renamed "Reset Baseline" button to "Accept All"
+- Activity bar badge now shows number of changed files instead of pending hunk count
+
 ## [0.2.2]
 
 ### Added
