@@ -4,6 +4,7 @@ import { ChangeTracker } from './changeTracker';
 import { ReviewManager } from './reviewManager';
 import { ReviewTreeProvider, HunkTreeItem, FileTreeItem } from './reviewTreeProvider';
 import { BaselineContentProvider, CurrentContentProvider, openDiffForFile } from './baselineContentProvider';
+import { ControlsViewProvider } from './controlsViewProvider';
 
 let baselineService: BaselineService;
 let changeTracker: ChangeTracker;
@@ -35,6 +36,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     )
   );
 
+  // Controls webview panel
+  const controlsProvider = new ControlsViewProvider(changeTracker, reviewManager);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      ControlsViewProvider.viewType,
+      controlsProvider
+    )
+  );
+
   // TreeView sidebar
   const treeProvider = new ReviewTreeProvider(reviewManager);
   treeView = vscode.window.createTreeView('cherryDiffReview', {
@@ -56,7 +66,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
 
   reviewManager.onDidChangeReview(() => {
+    // Sync changed files: remove files that no longer have pending hunks
+    const activeFiles = new Set(reviewManager.getAllFileReviews().keys());
+    for (const fsPath of changeTracker.getChangedFiles()) {
+      if (!activeFiles.has(fsPath)) {
+        changeTracker.removeChangedFile(fsPath);
+      }
+    }
     updateBadge();
+    controlsProvider.updateView();
   });
 
   // --- Commands ---
@@ -73,6 +91,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await captureFilteredBaselines(baselineService);
       changeTracker.startTracking();
       await vscode.commands.executeCommand('setContext', 'cherryDiff.tracking', true);
+      controlsProvider.updateView();
     }),
 
     // Reset baseline — capture current state as the new baseline
@@ -81,6 +100,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       changeTracker.clearChangedFiles();
       await captureFilteredBaselines(baselineService);
       updateBadge();
+      controlsProvider.updateView();
     }),
 
     // Disable tracking
@@ -91,6 +111,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await vscode.commands.executeCommand('setContext', 'cherryDiff.tracking', false);
       await vscode.commands.executeCommand('setContext', 'cherryDiff.reviewActive', false);
       updateBadge();
+      controlsProvider.updateView();
     }),
 
     // Open diff — from tree item or fsPath

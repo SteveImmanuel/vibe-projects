@@ -2,7 +2,7 @@
   "name": "cherry-diff",
   "displayName": "Cherry Diff",
   "description": "Per-hunk approve/reject UI for file edits. Works with any project.",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "publisher": "cherry-diff",
   "license": "MIT",
   "icon": "assets/icon.png",
@@ -140,33 +140,7 @@
       }
     ],
     "menus": {
-      "view/title": [
-        {
-          "command": "cherryDiff.startReview",
-          "when": "view == cherryDiffReview",
-          "group": "navigation@1"
-        },
-        {
-          "command": "cherryDiff.enableTracking",
-          "when": "view == cherryDiffReview && !cherryDiff.tracking",
-          "group": "navigation@2"
-        },
-        {
-          "command": "cherryDiff.disableTracking",
-          "when": "view == cherryDiffReview && cherryDiff.tracking",
-          "group": "navigation@2"
-        },
-        {
-          "command": "cherryDiff.resetBaseline",
-          "when": "view == cherryDiffReview && cherryDiff.tracking",
-          "group": "navigation@3"
-        },
-        {
-          "command": "cherryDiff.editFilters",
-          "when": "view == cherryDiffReview",
-          "group": "navigation@4"
-        }
-      ],
+      "view/title": [],
       "view/item/context": [
         {
           "command": "cherryDiff.acceptHunk",
@@ -214,8 +188,14 @@
     "views": {
       "cherryDiff": [
         {
+          "id": "cherryDiffControls",
+          "name": "Controls",
+          "type": "webview",
+          "initialSize": 1
+        },
+        {
           "id": "cherryDiffReview",
-          "name": ""
+          "name": "Review"
         }
       ]
     },
@@ -227,7 +207,7 @@
       },
       {
         "view": "cherryDiffReview",
-        "contents": "Tracking is disabled.\n\n[Enable Tracking](command:cherryDiff.enableTracking) to start capturing file changes.",
+        "contents": "Tracking is disabled.",
         "when": "!cherryDiff.tracking"
       }
     ]

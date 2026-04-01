@@ -132,6 +132,10 @@ export class ChangeTracker implements vscode.Disposable {
     return new Set(this.changedFiles);
   }
 
+  removeChangedFile(fsPath: string): void {
+    this.changedFiles.delete(fsPath);
+  }
+
   clearChangedFiles(): void {
     this.changedFiles.clear();
   }
