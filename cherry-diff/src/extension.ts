@@ -75,6 +75,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await vscode.commands.executeCommand('setContext', 'cherryDiff.tracking', true);
     }),
 
+    // Reset baseline — capture current state as the new baseline
+    vscode.commands.registerCommand('cherryDiff.resetBaseline', async () => {
+      reviewManager.clearReview();
+      changeTracker.clearChangedFiles();
+      await captureFilteredBaselines(baselineService);
+      updateBadge();
+    }),
+
     // Disable tracking
     vscode.commands.registerCommand('cherryDiff.disableTracking', async () => {
       changeTracker.stopTracking();

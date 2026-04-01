@@ -2,7 +2,7 @@
   "name": "cherry-diff",
   "displayName": "Cherry Diff",
   "description": "Per-hunk approve/reject UI for file edits. Works with any project.",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "publisher": "cherry-diff",
   "license": "MIT",
   "icon": "assets/icon.png",
@@ -83,6 +83,11 @@
         "icon": "$(play)"
       },
       {
+        "command": "cherryDiff.resetBaseline",
+        "title": "Reset Baseline",
+        "icon": "$(discard)"
+      },
+      {
         "command": "cherryDiff.disableTracking",
         "title": "Disable Tracking",
         "icon": "$(debug-stop)"
@@ -152,9 +157,14 @@
           "group": "navigation@2"
         },
         {
+          "command": "cherryDiff.resetBaseline",
+          "when": "view == cherryDiffReview && cherryDiff.tracking",
+          "group": "navigation@3"
+        },
+        {
           "command": "cherryDiff.editFilters",
           "when": "view == cherryDiffReview",
-          "group": "navigation@3"
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
