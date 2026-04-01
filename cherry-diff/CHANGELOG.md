@@ -1,6 +1,29 @@
 # Changelog
 
-## [0.2.3]
+## [0.3.0]
+
+### Added
+- Diff tabs auto-close when all hunks in a file are resolved
+- Auto-navigate to next file's diff after finishing review of a file
+
+## [0.2.6]
+
+### Changed
+- Extension Development Host now launches with `--disable-extensions` for clean testing
+
+## [0.2.5]
+
+### Added
+- **Reject All** button in Controls panel
+
+### Changed
+- Redesigned Controls panel button layout:
+  - Row 1: Stop Tracking (full width)
+  - Row 2: Refresh + Filters
+  - Row 3: Accept All (green) + Reject All (red)
+- Unified button styling with white text across all colored buttons
+
+## [0.2.4]
 
 ### Changed
 - Renamed "Reset Baseline" button to "Accept All"

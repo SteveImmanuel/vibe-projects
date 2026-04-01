@@ -12,20 +12,21 @@ The core idea: instead of accepting or rejecting an entire file's changes at onc
 - **Marketplace-publishable** — uses only stable, public VS Code APIs (no proposed APIs)
 - **Non-invasive** — no inline editor UI (no CodeLens, no decorations). All review happens in a dedicated sidebar panel + VS Code's native diff editor
 
-## Current state (v0.2.2)
+## Current state (v0.3.0)
 
 Working MVP. Core features implemented:
 - Tracks file changes (create, modify, delete) with configurable include/exclude glob filters
 - Computes per-hunk diffs using the `diff` npm package
-- **Controls panel** (WebviewView) with buttons: Refresh, Start/Stop Tracking, Reset Baseline, Filters
+- **Controls panel** (WebviewView) with buttons: Refresh, Stop Tracking, Accept All (green), Reject All (red), Filters
 - **Review panel** (TreeView) shows files and their hunks with inline Accept/Reject buttons
 - Clicking a hunk opens VS Code's native diff editor (baseline vs current) scrolled to the relevant line
 - Accept advances the baseline; Reject rewrites the file without that hunk
 - Auto-save after accept/reject (configurable via `cherryDiff.autoSave`)
 - Handles edge cases: new files (reject deletes), deleted files (reject recreates), empty files
-- Badge on the activity bar icon shows pending hunk count
+- Badge on the activity bar icon shows number of changed files
 - Auto-refreshes sidebar when files change (800ms debounce)
 - Hunk labels show only actual changed lines, not context (e.g. "line 42" for single-line, "lines 42-50" for multi-line)
+- Diff tabs auto-close when a file's review is complete; auto-opens next file if more remain
 
 ## Project structure
 
@@ -187,8 +188,9 @@ Central orchestrator. Key behaviors:
 ### `controlsViewProvider.ts`
 WebviewView that renders the **Controls** section at the top of the Cherry Diff sidebar. Uses HTML/CSS with VS Code theme variables for native look. Shows:
 - **Status line**: "Tracking active · N files changed · M hunks pending"
-- **Row 1**: Refresh (primary) + Stop Tracking (danger) — or Start Tracking when disabled
-- **Row 2** (when tracking): Reset Baseline + Filters (secondary)
+- **Row 1**: Stop Tracking (full width, dark red) — or Start Tracking when disabled
+- **Row 2**: Refresh (primary) + Filters (secondary)
+- **Row 3**: Accept All (green) + Reject All (red)
 
 All buttons have tooltip text on hover. Communicates with extension.ts via `webviewView.webview.onDidReceiveMessage()`. The view updates when tracking state, changed files, or review state changes.
 
@@ -212,11 +214,13 @@ Both refresh when `onDidChangeReview` fires (so the diff editor updates after ac
 Wiring and command registration. Notable details:
 
 - **Auto-refresh**: `changeTracker.onDidChangeTrackedFiles` → debounced 800ms → `reviewManager.startReview()` (skipped if `applying` flag is set)
-- **Badge**: `treeView.badge = { value: pendingCount, tooltip: "..." }` or `undefined` when 0
+- **Badge**: `treeView.badge = { value: fileCount, tooltip: "..." }` or `undefined` when 0. Shows number of changed files (not hunks).
 - **Changed files sync**: On `onDidChangeReview`, files no longer in the review are removed from the changed files set (so the Controls panel count stays accurate)
+- **Diff tab lifecycle**: Tracks `previousReviewFiles` set. When a file is resolved (removed from review), its diff tab is closed via `closeDiffTab()`. If other files remain, the next file's diff is auto-opened.
+- **`closeDiffTab(fsPath)`**: Finds the diff tab by matching the label pattern `"relativePath (Baseline ↔ Current)"` and closes it via `vscode.window.tabGroups.close()`.
 - **Context keys**: `cherryDiff.tracking` (controls play/stop button visibility), `cherryDiff.reviewActive`
 - **`captureFilteredBaselines()`**: reads settings, calls `vscode.workspace.findFiles()` with include/exclude patterns, deduplicates, captures each file
-- **`cherryDiff.resetBaseline`** command: clears review, clears changed files, recaptures baselines from current state
+- **`cherryDiff.resetBaseline`** command (labeled "Accept All" in UI): clears review, clears changed files, recaptures baselines from current state
 
 ## VS Code extension manifest (package.json)
 
@@ -226,7 +230,7 @@ Wiring and command registration. Notable details:
 | `cherryDiff.startReview` | Start Review | `$(refresh)` | Controls webview |
 | `cherryDiff.enableTracking` | Enable Tracking | `$(play)` | Controls webview |
 | `cherryDiff.disableTracking` | Disable Tracking | `$(debug-stop)` | Controls webview |
-| `cherryDiff.resetBaseline` | Reset Baseline | `$(discard)` | Controls webview |
+| `cherryDiff.resetBaseline` | Accept All | `$(discard)` | Controls webview |
 | `cherryDiff.editFilters` | Edit Filters | `$(filter)` | Controls webview |
 | `cherryDiff.acceptHunk` | Accept Hunk | `$(check)` | Hunk item inline |
 | `cherryDiff.rejectHunk` | Reject Hunk | `$(x)` | Hunk item inline |
@@ -260,7 +264,7 @@ The baseline is **the file's content at the moment tracking was enabled** (exten
 
 - **Accept** advances the baseline forward (baseline now includes the accepted change)
 - **Reject** does not change the baseline (the file is rewritten to remove the rejected change)
-- **Reset Baseline** recaptures all file contents as-is, clearing all pending reviews
+- **Accept All** (formerly Reset Baseline) recaptures all file contents as-is, clearing all pending reviews
 - **Disable tracking** clears all baselines
 - **Enable tracking** recaptures all baselines from current file state
 - Edits made while tracking is disabled are invisible (baked into the new baseline when re-enabled)
