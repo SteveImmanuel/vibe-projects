@@ -65,11 +65,34 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }, 800);
   });
 
-  reviewManager.onDidChangeReview(() => {
+  // Track which files are under review so we can close resolved diff tabs
+  let previousReviewFiles = new Set<string>();
+
+  reviewManager.onDidChangeReview(async () => {
+    const currentReviewFiles = new Set(reviewManager.getAllFileReviews().keys());
+
+    // Close diff tabs for resolved files, then open next file if any remain
+    const resolvedFiles: string[] = [];
+    for (const fsPath of previousReviewFiles) {
+      if (!currentReviewFiles.has(fsPath)) {
+        resolvedFiles.push(fsPath);
+      }
+    }
+    previousReviewFiles = currentReviewFiles;
+
+    for (const fsPath of resolvedFiles) {
+      await closeDiffTab(fsPath);
+    }
+    if (resolvedFiles.length > 0 && currentReviewFiles.size > 0) {
+      const nextFile = currentReviewFiles.values().next().value;
+      if (nextFile) {
+        await openDiffForFile(nextFile);
+      }
+    }
+
     // Sync changed files: remove files that no longer have pending hunks
-    const activeFiles = new Set(reviewManager.getAllFileReviews().keys());
     for (const fsPath of changeTracker.getChangedFiles()) {
-      if (!activeFiles.has(fsPath)) {
+      if (!currentReviewFiles.has(fsPath)) {
         changeTracker.removeChangedFile(fsPath);
       }
     }
@@ -301,6 +324,23 @@ async function navigateHunk(direction: 'next' | 'prev'): Promise<void> {
   }
 
   await openDiffForFile(target.fsPath, target.hunk.hunk.newStart - 1);
+}
+
+/**
+ * Close the diff editor tab for a specific file by matching the tab label.
+ */
+async function closeDiffTab(fsPath: string): Promise<void> {
+  const relativePath = vscode.workspace.asRelativePath(vscode.Uri.file(fsPath));
+  const expectedLabel = `${relativePath} (Baseline ↔ Current)`;
+
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      if (tab.label === expectedLabel) {
+        await vscode.window.tabGroups.close(tab);
+        return;
+      }
+    }
+  }
 }
 
 export function deactivate(): void {
