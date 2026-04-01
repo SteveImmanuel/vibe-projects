@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { ReviewManager } from './reviewManager';
 import { FileReview, HunkReview } from './types';
-import { getHunkCurrentRange, getFirstChangedLine } from './diffService';
+import { getChangedLineRange, getFirstChangedLine } from './diffService';
 
 export type ReviewTreeItem = FileTreeItem | HunkTreeItem;
 
@@ -38,9 +38,11 @@ export class HunkTreeItem extends vscode.TreeItem {
     public readonly hunkReview: HunkReview,
     public readonly index: number
   ) {
-    const { startLine, endLine } = getHunkCurrentRange(hunkReview.hunk);
+    const { startLine, endLine } = getChangedLineRange(hunkReview.hunk);
     const changedLine = getFirstChangedLine(hunkReview.hunk);
-    const label = `Hunk ${index + 1}: lines ${startLine + 1}-${endLine}`;
+    const label = startLine + 1 === endLine
+      ? `Hunk ${index + 1}: line ${startLine + 1}`
+      : `Hunk ${index + 1}: lines ${startLine + 1}-${endLine}`;
 
     super(label, vscode.TreeItemCollapsibleState.None);
 

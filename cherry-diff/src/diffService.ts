@@ -90,6 +90,41 @@ export function getFirstChangedLine(hunk: Hunk): number {
 }
 
 /**
+ * Get the range of only the actual changed lines (+ or -) in a hunk,
+ * excluding context lines. Returns 0-indexed, endLine exclusive.
+ */
+export function getChangedLineRange(hunk: Hunk): { startLine: number; endLine: number } {
+  let currentLine = hunk.newStart - 1;
+  let firstChanged = -1;
+  let lastChanged = -1;
+
+  for (const line of hunk.lines) {
+    const prefix = line[0];
+    if (prefix === '+') {
+      if (firstChanged === -1) {
+        firstChanged = currentLine;
+      }
+      lastChanged = currentLine;
+      currentLine++;
+    } else if (prefix === '-') {
+      if (firstChanged === -1) {
+        firstChanged = currentLine;
+      }
+      lastChanged = currentLine;
+      // Removed lines don't advance currentLine
+    } else {
+      currentLine++;
+    }
+  }
+
+  if (firstChanged === -1) {
+    return { startLine: hunk.newStart - 1, endLine: hunk.newStart - 1 + hunk.newLines };
+  }
+
+  return { startLine: firstChanged, endLine: lastChanged + 1 };
+}
+
+/**
  * Classify each line in a hunk as added, removed, or context.
  * Returns arrays of 0-indexed line numbers in the current file.
  */
