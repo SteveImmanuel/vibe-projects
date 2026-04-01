@@ -84,7 +84,7 @@
       },
       {
         "command": "cherryDiff.resetBaseline",
-        "title": "Reset Baseline",
+        "title": "Accept All",
         "icon": "$(discard)"
       },
       {

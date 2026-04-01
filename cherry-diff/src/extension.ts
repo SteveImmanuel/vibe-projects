@@ -260,9 +260,9 @@ function updateBadge(): void {
     return;
   }
 
-  const pending = reviewManager?.getAllPendingHunks().length ?? 0;
-  if (pending > 0) {
-    treeView.badge = { value: pending, tooltip: `${pending} pending hunk${pending !== 1 ? 's' : ''}` };
+  const fileCount = reviewManager?.getAllFileReviews().size ?? 0;
+  if (fileCount > 0) {
+    treeView.badge = { value: fileCount, tooltip: `${fileCount} file${fileCount !== 1 ? 's' : ''} changed` };
   } else {
     treeView.badge = undefined;
   }
