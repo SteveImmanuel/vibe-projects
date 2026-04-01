@@ -36,6 +36,9 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider {
         case 'resetBaseline':
           vscode.commands.executeCommand('cherryDiff.resetBaseline');
           break;
+        case 'rejectAll':
+          vscode.commands.executeCommand('cherryDiff.rejectAll');
+          break;
         case 'editFilters':
           vscode.commands.executeCommand('cherryDiff.editFilters');
           break;
@@ -117,12 +120,28 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider {
       background: var(--vscode-button-secondaryHoverBackground);
     }
     .btn-danger {
-      background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
-      color: var(--vscode-errorForeground, #f48771);
-      border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+      background: #6e2020;
+      color: #fff;
+      border: 1px solid #8b2a2a;
     }
     .btn-danger:hover {
-      opacity: 0.9;
+      background: #832626;
+    }
+    .btn-accept {
+      background: #1a7f37;
+      color: #fff;
+      border: 1px solid #238636;
+    }
+    .btn-accept:hover {
+      background: #238636;
+    }
+    .btn-reject {
+      background: #8b2a2a;
+      color: #fff;
+      border: 1px solid transparent;
+    }
+    .btn-reject:hover {
+      background: #a33232;
     }
   </style>
 </head>
@@ -131,20 +150,24 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider {
     ${trackingStatus}${pendingStatus ? ` &middot; <span class="highlight">${pendingStatus}</span>` : ''}
   </div>
 
+  ${isTracking
+    ? `
   <div class="btn-row">
-    ${isTracking
-      ? `<button class="btn-primary" onclick="send('startReview')" title="Check for new file changes and update the review list">Refresh</button>
-         <button class="btn-danger" onclick="send('disableTracking')" title="Stop watching for file changes and clear all baselines">Stop Tracking</button>`
-      : `<button class="btn-primary" onclick="send('enableTracking')" title="Start watching for file changes and capture current file states as baselines">Start Tracking</button>`
-    }
+    <button class="btn-danger" onclick="send('disableTracking')" title="Stop watching for file changes and clear all baselines">Stop Tracking</button>
   </div>
-
-  ${isTracking ? `
   <div class="btn-row">
-    <button class="btn-secondary" onclick="send('resetBaseline')" title="Accept all pending changes and set the current file states as the new baseline">Accept All</button>
+    <button class="btn-primary" onclick="send('startReview')" title="Check for new file changes and update the review list">Refresh</button>
     <button class="btn-secondary" onclick="send('editFilters')" title="Configure which files and directories to include or exclude from tracking">Filters</button>
   </div>
-  ` : ''}
+  <div class="btn-row">
+    <button class="btn-accept" onclick="send('resetBaseline')" title="Accept all pending changes and set the current file states as the new baseline">Accept All</button>
+    <button class="btn-reject" onclick="send('rejectAll')" title="Reject all pending changes and revert files to their baseline state">Reject All</button>
+  </div>`
+    : `
+  <div class="btn-row">
+    <button class="btn-primary" onclick="send('enableTracking')" title="Start watching for file changes and capture current file states as baselines">Start Tracking</button>
+  </div>`
+  }
 
   <script>
     const vscode = acquireVsCodeApi();
