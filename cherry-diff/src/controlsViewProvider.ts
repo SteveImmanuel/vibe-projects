@@ -133,16 +133,16 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider {
 
   <div class="btn-row">
     ${isTracking
-      ? `<button class="btn-primary" onclick="send('startReview')">Refresh</button>
-         <button class="btn-danger" onclick="send('disableTracking')">Stop Tracking</button>`
-      : `<button class="btn-primary" onclick="send('enableTracking')">Start Tracking</button>`
+      ? `<button class="btn-primary" onclick="send('startReview')" title="Check for new file changes and update the review list">Refresh</button>
+         <button class="btn-danger" onclick="send('disableTracking')" title="Stop watching for file changes and clear all baselines">Stop Tracking</button>`
+      : `<button class="btn-primary" onclick="send('enableTracking')" title="Start watching for file changes and capture current file states as baselines">Start Tracking</button>`
     }
   </div>
 
   ${isTracking ? `
   <div class="btn-row">
-    <button class="btn-secondary" onclick="send('resetBaseline')">Reset Baseline</button>
-    <button class="btn-secondary" onclick="send('editFilters')">Filters</button>
+    <button class="btn-secondary" onclick="send('resetBaseline')" title="Capture the current file states as the new baseline, clearing all pending reviews">Reset Baseline</button>
+    <button class="btn-secondary" onclick="send('editFilters')" title="Configure which files and directories to include or exclude from tracking">Filters</button>
   </div>
   ` : ''}
 
