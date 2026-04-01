@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.2] - 2026-04-01
+## [0.2.2]
 
 ### Added
 - Button tooltips on hover in Controls panel describing what each button does
@@ -9,7 +9,7 @@
 - Hunk labels now show only actual changed lines, not context lines (e.g. "line 42" instead of "lines 38-50")
 - Single-line changes display as "line N" instead of "lines N-N"
 
-## [0.2.1] - 2026-04-01
+## [0.2.1]
 
 ### Added
 - **Controls panel** (WebviewView) with dedicated buttons: Refresh, Start/Stop Tracking, Reset Baseline, Filters
@@ -20,7 +20,7 @@
 - Moved all control buttons from the view title bar into the new Controls webview panel
 - Review panel now shows as a separate collapsible section below Controls
 
-## [0.2.0] - 2026-04-01
+## [0.2.0]
 
 ### Added
 - Extension icon (cherry-themed with +/- symbols)
@@ -29,10 +29,9 @@
 - Repository field in package.json
 
 ### Changed
-- Bumped to v0.2.0
 - Updated refresh icon from `$(search)` to `$(refresh)`
 
-## [0.1.5] - 2026-04-01
+## [0.1.5]
 
 ### Added
 - `cherryDiff.autoSave` setting (default: `true`) — automatically saves files after accepting or rejecting hunks
@@ -40,7 +39,7 @@
 ### Removed
 - Redundant "Open Diff" inline button on tree items (clicking the row already opens the diff)
 
-## [0.1.4] - 2026-04-01
+## [0.1.4]
 
 ### Added
 - File deletion tracking (`onDidDelete` watcher)
@@ -48,7 +47,7 @@
 - Support for new files: empty baseline, reject deletes the file
 - `CurrentContentProvider` for showing deleted file content in diff editor
 
-## [0.1.3] - 2026-04-01
+## [0.1.3]
 
 ### Added
 - Activity bar badge showing pending hunk count (replaces status bar item)
@@ -67,7 +66,7 @@
 - Inline editor decorations (`HunkDecorationProvider` removed)
 - CodeLens Accept/Reject buttons (all review moved to sidebar)
 
-## [0.1.2] - 2026-04-01
+## [0.1.2]
 
 ### Fixed
 - Accept hunk now works correctly — advances baseline forward instead of rewriting the file (which was a no-op)
@@ -77,14 +76,14 @@
 - `BaselineContentProvider` for showing baseline in VS Code's native diff editor
 - Side-by-side diff view (baseline vs current) when clicking review items
 
-## [0.1.1] - 2026-04-01
+## [0.1.1]
 
 ### Changed
 - Removed Git dependency — extension now works with any project (Git, non-Git, no VCS)
 - Baselines are captured as in-memory snapshots at extension startup
 - `GitService` removed entirely
 
-## [0.1.0] - 2026-04-01
+## [0.1.0]
 
 ### Added
 - Initial release
