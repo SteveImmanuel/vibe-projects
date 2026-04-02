@@ -57,16 +57,6 @@ export function reconstructFile(
 }
 
 /**
- * Compute the line range in the *current* file that a hunk covers.
- * Returns 0-indexed start line and end line (exclusive).
- */
-export function getHunkCurrentRange(hunk: Hunk): { startLine: number; endLine: number } {
-  const startLine = hunk.newStart - 1; // convert to 0-indexed
-  const endLine = startLine + hunk.newLines;
-  return { startLine, endLine };
-}
-
-/**
  * Find the first actually changed line (+ or -) in a hunk.
  * Returns a 0-indexed line number in the current file.
  * Falls back to hunk start if no changed lines found.
@@ -124,34 +114,3 @@ export function getChangedLineRange(hunk: Hunk): { startLine: number; endLine: n
   return { startLine: firstChanged, endLine: lastChanged + 1 };
 }
 
-/**
- * Classify each line in a hunk as added, removed, or context.
- * Returns arrays of 0-indexed line numbers in the current file.
- */
-export function classifyHunkLines(hunk: Hunk): {
-  added: number[];
-  removed: number[];
-  context: number[];
-} {
-  const added: number[] = [];
-  const removed: number[] = [];
-  const context: number[] = [];
-
-  let currentLine = hunk.newStart - 1; // 0-indexed
-
-  for (const line of hunk.lines) {
-    const prefix = line[0];
-    if (prefix === '+') {
-      added.push(currentLine);
-      currentLine++;
-    } else if (prefix === '-') {
-      removed.push(currentLine);
-      // Removed lines don't advance the current-file line counter
-    } else {
-      context.push(currentLine);
-      currentLine++;
-    }
-  }
-
-  return { added, removed, context };
-}

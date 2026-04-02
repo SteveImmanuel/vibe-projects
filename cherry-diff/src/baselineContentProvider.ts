@@ -67,8 +67,7 @@ export class CurrentContentProvider implements vscode.TextDocumentContentProvide
  */
 export async function openDiffForFile(
   fsPath: string,
-  line?: number,
-  reviewManager?: ReviewManager
+  line?: number
 ): Promise<void> {
   const baselineUri = vscode.Uri.parse(`cherry-diff-baseline:${fsPath}`);
   const currentUri = vscode.Uri.file(fsPath);

@@ -12,7 +12,7 @@ The core idea: instead of accepting or rejecting an entire file's changes at onc
 - **Marketplace-publishable** — uses only stable, public VS Code APIs (no proposed APIs)
 - **Non-invasive** — no inline editor UI (no CodeLens, no decorations). All review happens in a dedicated sidebar panel + VS Code's native diff editor
 
-## Current state (v0.3.0)
+## Current state (v0.3.1)
 
 Working MVP. Core features implemented:
 - Tracks file changes (create, modify, delete) with configurable include/exclude glob filters
@@ -164,10 +164,8 @@ Wraps the `diff` npm package. Key functions:
 
 - `computeHunks(relativePath, baseline, current)` → `HunkReview[]` — uses `structuredPatch()` to get hunks
 - `reconstructFile(relativePath, baseline, hunks)` → `string | false` — uses `formatPatch()` + `applyPatch()` to rebuild a file from baseline + selected hunks
-- `getHunkCurrentRange(hunk)` → `{ startLine, endLine }` — 0-indexed full hunk range including context lines
 - `getFirstChangedLine(hunk)` → `number` — first `+` or `-` line (used for scroll-to-hunk)
 - `getChangedLineRange(hunk)` → `{ startLine, endLine }` — range of only actual changed lines, excluding context (used for hunk labels in TreeView)
-- `classifyHunkLines(hunk)` → `{ added, removed, context }` — categorizes each line (available but currently unused)
 
 **Important**: hunk IDs are generated with a global counter (`hunk_0`, `hunk_1`, ...) that never resets. After accept/reject, hunks are recomputed and get new IDs. This means hunk IDs are ephemeral — never persist them.
 
@@ -178,10 +176,10 @@ Central orchestrator. Key behaviors:
 - **`acceptHunk()`**: Applies the accepted hunk to the baseline (advancing it forward), then re-diffs current vs new baseline. The file on disk is NOT modified. Auto-saves if enabled.
 - **`rejectHunk()`**: Reconstructs the file without the rejected hunk and writes it to disk. Then re-diffs. Auto-saves if enabled.
 - **`setAllHunksInFile()`**: Accept all = advance baseline to current content. Reject all = rewrite file to baseline. Auto-saves if enabled.
-- **`writeFileContent()`**: Private helper handling edge cases:
-  - Normal file: opens document, creates WorkspaceEdit, replaces full range
-  - Deleted file being restored: uses `vscode.workspace.fs.writeFile()` to recreate
-  - New file being rejected (content becomes empty): uses `vscode.workspace.fs.delete()`
+- **`writeFileContent(uri, content)`**: Private helper handling edge cases:
+  - Content is empty: deletes the file (rejected new file, or all content removed)
+  - File doesn't exist on disk: recreates it via `vscode.workspace.fs.writeFile()`
+  - Normal case: opens document, creates WorkspaceEdit, replaces full range
 - **`autoSave()`**: Private helper that saves the file if `cherryDiff.autoSave` is true and the document is dirty.
 - **`applying` flag**: Set to `true` during file writes to prevent the auto-refresh debounce from triggering a re-review mid-write (which would cause infinite loops).
 

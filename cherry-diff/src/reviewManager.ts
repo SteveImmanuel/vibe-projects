@@ -133,7 +133,7 @@ export class ReviewManager implements vscode.Disposable {
 
     this.applying = true;
     try {
-      await this.writeFileContent(review.uri, newContent, review.baselineContent);
+      await this.writeFileContent(review.uri, newContent);
 
       review.currentContent = newContent;
       const remainingHunks = computeHunks(
@@ -171,7 +171,7 @@ export class ReviewManager implements vscode.Disposable {
       // Reject all: revert file to baseline
       this.applying = true;
       try {
-        await this.writeFileContent(review.uri, review.baselineContent, review.baselineContent);
+        await this.writeFileContent(review.uri, review.baselineContent);
       } finally {
         this.applying = false;
       }
@@ -188,23 +188,9 @@ export class ReviewManager implements vscode.Disposable {
    * - If content is non-empty but file doesn't exist: create the file (was deleted, rejecting restores it)
    * - Otherwise: replace file content normally
    */
-  private async writeFileContent(
-    uri: vscode.Uri,
-    content: string,
-    baselineContent: string
-  ): Promise<void> {
-    if (content === '' && baselineContent === '') {
-      // New file being fully rejected — delete it
-      try {
-        await vscode.workspace.fs.delete(uri);
-      } catch {
-        // Already gone
-      }
-      return;
-    }
-
+  private async writeFileContent(uri: vscode.Uri, content: string): Promise<void> {
     if (content === '') {
-      // All content removed — delete the file
+      // Empty content means delete the file (rejected new file, or all content removed)
       try {
         await vscode.workspace.fs.delete(uri);
       } catch {
@@ -213,7 +199,7 @@ export class ReviewManager implements vscode.Disposable {
       return;
     }
 
-    // Check if file exists
+    // Check if file exists on disk
     let fileExists = true;
     try {
       await vscode.workspace.fs.stat(uri);

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.1]
+
+### Changed
+- Removed dead code: `classifyHunkLines`, `getHunkCurrentRange` from diffService
+- Simplified `writeFileContent` by merging duplicate empty-content branches and removing unused parameter
+- Removed unused `reviewManager` parameter from `openDiffForFile`
+- Changed `vscode` import to `import type` in types.ts
+- Excluded CHANGELOG.md from VSIX package
+
 ## [0.3.0]
 
 ### Added
