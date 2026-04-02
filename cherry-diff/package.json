@@ -191,11 +191,12 @@
           "id": "cherryDiffControls",
           "name": "Controls",
           "type": "webview",
-          "initialSize": 1
+          "initialSize": 3
         },
         {
           "id": "cherryDiffReview",
-          "name": "Review"
+          "name": "Review",
+          "initialSize": 7
         }
       ]
     },
