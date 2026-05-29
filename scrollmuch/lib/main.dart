@@ -16,6 +16,12 @@ void main() async {
     systemNavigationBarIconBrightness: Brightness.light,
   ));
 
+  // Single-column portrait layout; lock orientation to avoid landscape overflow.
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+
   final storageService = StorageService();
   await storageService.init();
 
