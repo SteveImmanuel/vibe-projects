@@ -80,6 +80,19 @@ class MainActivity : FlutterActivity() {
     
     override fun onResume() {
         super.onResume()
+        notifyFlutterResume()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Toggling the Quick Settings tile happens from the notification shade,
+        // which steals window focus without pausing this activity — so onResume
+        // doesn't fire. Re-sync when focus returns so the in-app toggle reflects
+        // service changes made via the tile (or the notification "Turn Off").
+        if (hasFocus) notifyFlutterResume()
+    }
+
+    private fun notifyFlutterResume() {
         flutterEngine?.dartExecutor?.binaryMessenger?.let { messenger ->
             MethodChannel(messenger, CHANNEL).invokeMethod("onResume", null)
         }

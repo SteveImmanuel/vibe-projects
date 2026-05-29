@@ -11,8 +11,10 @@ import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Point
 import android.os.Build
 import android.os.IBinder
+import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 
@@ -39,7 +41,6 @@ class OverlayService : Service() {
     
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
-    private var layoutParams: WindowManager.LayoutParams? = null
     private var prefs: SharedPreferences? = null
     
     override fun onCreate() {
@@ -89,31 +90,7 @@ class OverlayService : Service() {
             alpha = currentDimLevel
         }
 
-        // MATCH_PARENT lets the window system re-measure the overlay to the
-        // current display, so it follows orientation changes instead of keeping
-        // a stale portrait size. FLAG_LAYOUT_NO_LIMITS + cutout ALWAYS make it
-        // extend over system bars, notches and curved edges in any orientation.
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_FULLSCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        )
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            params.layoutInDisplayCutoutMode =
-                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-        } else {
-            params.layoutInDisplayCutoutMode =
-                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-        }
-
-        layoutParams = params
+        val params = buildLayoutParams(resources.configuration.orientation)
 
         try {
             windowManager?.addView(overlayView, params)
@@ -124,15 +101,71 @@ class OverlayService : Service() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        // Force the overlay to re-measure against the new orientation; some
-        // devices don't re-layout overlay windows on rotation on their own.
+        // Recompute for the new orientation so the overlay re-covers the full
+        // screen instead of keeping the previous orientation's dimensions.
         val view = overlayView ?: return
-        val params = layoutParams ?: return
+        val params = buildLayoutParams(newConfig.orientation)
         try {
             windowManager?.updateViewLayout(view, params)
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    private fun buildLayoutParams(orientation: Int): WindowManager.LayoutParams {
+        // Oversize for the current orientation and center it, so the overlay
+        // overflows past the status bar, navigation bar / chin and curved edges
+        // on all sides. FLAG_LAYOUT_NO_LIMITS + cutout ALWAYS let it bleed off
+        // screen; computing per-orientation keeps it correct after rotation.
+        val size = getOverlaySize(orientation)
+        val params = WindowManager.LayoutParams(
+            size.x,
+            size.y,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_FULLSCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        )
+        params.gravity = Gravity.CENTER
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            params.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        } else {
+            params.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+
+        return params
+    }
+
+    private fun getOverlaySize(orientation: Int): Point {
+        val wm = windowManager ?: return Point(1500, 3000)
+
+        val (boundsW, boundsH) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = wm.maximumWindowMetrics.bounds
+            bounds.width() to bounds.height()
+        } else {
+            val p = Point()
+            @Suppress("DEPRECATION")
+            wm.defaultDisplay?.getRealSize(p)
+            p.x to p.y
+        }
+
+        // maximumWindowMetrics may report bounds in the device's natural
+        // orientation, so normalize to the current orientation explicitly.
+        val longEdge = maxOf(boundsW, boundsH)
+        val shortEdge = minOf(boundsW, boundsH)
+        val landscape = orientation == Configuration.ORIENTATION_LANDSCAPE
+        val screenW = if (landscape) longEdge else shortEdge
+        val screenH = if (landscape) shortEdge else longEdge
+
+        // Centered, so this overflows ~100px per side horizontally and ~300px
+        // per side vertically — enough to cover nav bar / chin / curved edges.
+        return Point(screenW + 200, screenH + 600)
     }
 
     private fun hideOverlay() {
@@ -144,7 +177,6 @@ class OverlayService : Service() {
             }
         }
         overlayView = null
-        layoutParams = null
     }
     
     private fun updateDimLevel(level: Float) {
