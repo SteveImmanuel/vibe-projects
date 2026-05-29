@@ -23,13 +23,18 @@ class QuickSettingsTile : TileService() {
             return
         }
         
-        if (OverlayService.isRunning) {
-            stopOverlayService()
-        } else {
+        // OverlayService processes the start/stop Intent asynchronously, so
+        // OverlayService.isRunning hasn't flipped yet at this point. Drive the
+        // tile from the action we're taking so it toggles immediately instead
+        // of waiting for the next onStartListening (shade reopen).
+        val willBeActive = !OverlayService.isRunning
+        if (willBeActive) {
             startOverlayService()
+        } else {
+            stopOverlayService()
         }
-        
-        updateTileState()
+
+        updateTileState(willBeActive)
     }
     
     private fun startOverlayService() {
@@ -46,9 +51,10 @@ class QuickSettingsTile : TileService() {
         startService(intent)
     }
     
-    private fun updateTileState() {
+    private fun updateTileState(activeOverride: Boolean? = null) {
+        val active = activeOverride ?: OverlayService.isRunning
         qsTile?.let { tile ->
-            if (OverlayService.isRunning) {
+            if (active) {
                 tile.state = Tile.STATE_ACTIVE
                 tile.label = "Dim: ${(OverlayService.currentDimLevel * 100).toInt()}%"
             } else {

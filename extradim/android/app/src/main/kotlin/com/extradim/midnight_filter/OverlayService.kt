@@ -8,16 +8,13 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
-import android.graphics.Point
 import android.os.Build
 import android.os.IBinder
-import android.view.Display
 import android.view.View
-import android.view.WindowInsets
 import android.view.WindowManager
-import android.view.WindowMetrics
 
 class OverlayService : Service() {
     
@@ -42,6 +39,7 @@ class OverlayService : Service() {
     
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
+    private var layoutParams: WindowManager.LayoutParams? = null
     private var prefs: SharedPreferences? = null
     
     override fun onCreate() {
@@ -90,12 +88,14 @@ class OverlayService : Service() {
             setBackgroundColor(Color.BLACK)
             alpha = currentDimLevel
         }
-        
-        val screenSize = getFullScreenSize()
-        
+
+        // MATCH_PARENT lets the window system re-measure the overlay to the
+        // current display, so it follows orientation changes instead of keeping
+        // a stale portrait size. FLAG_LAYOUT_NO_LIMITS + cutout ALWAYS make it
+        // extend over system bars, notches and curved edges in any orientation.
         val params = WindowManager.LayoutParams(
-            screenSize.x,
-            screenSize.y,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -104,44 +104,37 @@ class OverlayService : Service() {
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         )
-        
-        params.x = 0
-        params.y = -100
-        
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            params.layoutInDisplayCutoutMode = 
+            params.layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
         } else {
-            params.layoutInDisplayCutoutMode = 
+            params.layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
-        
+
+        layoutParams = params
+
         try {
             windowManager?.addView(overlayView, params)
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
-    
-    private fun getFullScreenSize(): Point {
-        val wm = windowManager ?: return Point(1080, 2400)
-        
-        val baseSize = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val metrics: WindowMetrics = wm.maximumWindowMetrics
-            Point(metrics.bounds.width(), metrics.bounds.height())
-        } else {
-            val display: Display? = wm.defaultDisplay
-            val size = Point()
-            display?.getRealSize(size)
-            size
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Force the overlay to re-measure against the new orientation; some
+        // devices don't re-layout overlay windows on rotation on their own.
+        val view = overlayView ?: return
+        val params = layoutParams ?: return
+        try {
+            windowManager?.updateViewLayout(view, params)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-        
-        // add extra padding to ensure full coverage on devices with chin/nav bar/curved edges
-        baseSize.x += 100
-        baseSize.y += 400
-        return baseSize
     }
-    
+
     private fun hideOverlay() {
         overlayView?.let {
             try {
@@ -151,6 +144,7 @@ class OverlayService : Service() {
             }
         }
         overlayView = null
+        layoutParams = null
     }
     
     private fun updateDimLevel(level: Float) {
