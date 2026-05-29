@@ -1,6 +1,7 @@
 package com.extradim.midnight_filter
 
 import android.content.Intent
+import android.graphics.drawable.Icon
 import android.provider.Settings
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
@@ -54,6 +55,7 @@ class QuickSettingsTile : TileService() {
     private fun updateTileState(activeOverride: Boolean? = null) {
         val active = activeOverride ?: OverlayService.isRunning
         qsTile?.let { tile ->
+            tile.icon = Icon.createWithResource(this, R.drawable.ic_tile)
             if (active) {
                 tile.state = Tile.STATE_ACTIVE
                 tile.label = "Dim: ${(OverlayService.currentDimLevel * 100).toInt()}%"
