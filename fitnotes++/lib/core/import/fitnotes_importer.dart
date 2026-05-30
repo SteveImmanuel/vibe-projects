@@ -47,7 +47,7 @@ class FitNotesImporter {
     try {
       return await _import(src);
     } finally {
-      src.dispose();
+      src.close();
     }
   }
 

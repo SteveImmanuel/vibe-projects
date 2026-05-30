@@ -5,9 +5,15 @@ import 'package:fitnotes_plus/core/database/database.dart';
 import 'package:fitnotes_plus/core/import/fitnotes_importer.dart';
 
 void main() {
-  // The real backup committed under fitnotes++/ref. `flutter test` runs with
-  // the package root (app/) as cwd, so the fixture is one level up.
-  final fixture = File('../ref/FitNotes_Backup.fitnotes');
+  // The real backup committed under fitnotes++/ref. Resolve it regardless of
+  // the test's working directory.
+  final fixture = [
+    'ref/FitNotes_Backup.fitnotes',
+    '../ref/FitNotes_Backup.fitnotes',
+  ].map(File.new).firstWhere(
+        (f) => f.existsSync(),
+        orElse: () => File('ref/FitNotes_Backup.fitnotes'),
+      );
 
   test('imports the real FitNotes backup with the expected counts', () async {
     expect(
