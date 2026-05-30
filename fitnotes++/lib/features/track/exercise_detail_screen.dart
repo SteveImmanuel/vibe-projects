@@ -13,6 +13,20 @@ import '../../core/util/format.dart';
 import 'graph_tab.dart';
 import 'history_tab.dart';
 
+double? _parseDuration(String text) {
+  final t = text.trim();
+  if (t.contains(':')) {
+    final p = t.split(':');
+    if (p.length == 2) {
+      final m = int.tryParse(p[0]);
+      final s = int.tryParse(p[1]);
+      if (m != null && s != null) return (m * 60 + s).toDouble();
+    }
+    return null;
+  }
+  return int.tryParse(t)?.toDouble();
+}
+
 /// Exercise detail with TRACK / HISTORY / GRAPH tabs.
 class ExerciseDetailScreen extends ConsumerWidget {
   const ExerciseDetailScreen({
@@ -129,8 +143,6 @@ class _TrackTabState extends ConsumerState<_TrackTab> {
     );
   }
 
-  /// On first load, prefill the editors from the day's last set for fast
-  /// repeat logging.
   void _maybePrefill(List<WorkoutSet> sets) {
     if (_prefilled || _editingId != null) return;
     if (sets.isNotEmpty) {
@@ -148,25 +160,67 @@ class _TrackTabState extends ConsumerState<_TrackTab> {
     switch (widget.exercise.type) {
       case ExerciseType.weightAndReps:
         fields
-          ..add(_stepper('WEIGHT (kg)', Fmt.number(_weight),
-              () => _addWeight(-_inc), () => _addWeight(_inc), _tapWeight))
-          ..add(_stepper('REPS', '$_reps', () => _addReps(-1),
-              () => _addReps(1), _tapReps));
+          ..add(_NumberStepper(
+            label: 'WEIGHT (kgs)',
+            value: _weight,
+            step: _inc,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            format: Fmt.weightValue,
+            parse: (t) => double.tryParse(t.trim()),
+            onChanged: (v) => setState(() => _weight = v),
+          ))
+          ..add(_NumberStepper(
+            label: 'REPS',
+            value: _reps.toDouble(),
+            step: 1,
+            keyboardType: TextInputType.number,
+            format: (v) => v.round().toString(),
+            parse: (t) => int.tryParse(t.trim())?.toDouble(),
+            onChanged: (v) => setState(() => _reps = v.round()),
+          ));
       case ExerciseType.repsOnly:
-        fields.add(_stepper('REPS', '$_reps', () => _addReps(-1),
-            () => _addReps(1), _tapReps));
+        fields.add(_NumberStepper(
+          label: 'REPS',
+          value: _reps.toDouble(),
+          step: 1,
+          keyboardType: TextInputType.number,
+          format: (v) => v.round().toString(),
+          parse: (t) => int.tryParse(t.trim())?.toDouble(),
+          onChanged: (v) => setState(() => _reps = v.round()),
+        ));
       case ExerciseType.distanceAndTime:
         fields
-          ..add(_stepper('DISTANCE (m)', Fmt.number(_distance),
-              () => _addDistance(-50), () => _addDistance(50), _tapDistance))
-          ..add(_stepper('TIME', Fmt.duration(_duration),
-              () => _addDuration(-15), () => _addDuration(15), _tapDuration));
+          ..add(_NumberStepper(
+            label: 'DISTANCE (m)',
+            value: _distance,
+            step: 50,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            format: Fmt.weightValue,
+            parse: (t) => double.tryParse(t.trim()),
+            onChanged: (v) => setState(() => _distance = v),
+          ))
+          ..add(_NumberStepper(
+            label: 'TIME (m:ss)',
+            value: _duration.toDouble(),
+            step: 15,
+            keyboardType: TextInputType.text,
+            format: (v) => Fmt.duration(v.round()),
+            parse: _parseDuration,
+            onChanged: (v) => setState(() => _duration = v.round()),
+          ));
       case ExerciseType.timeOnly:
-        fields.add(_stepper('TIME', Fmt.duration(_duration),
-            () => _addDuration(-15), () => _addDuration(15), _tapDuration));
+        fields.add(_NumberStepper(
+          label: 'TIME (m:ss)',
+          value: _duration.toDouble(),
+          step: 15,
+          keyboardType: TextInputType.text,
+          format: (v) => Fmt.duration(v.round()),
+          parse: _parseDuration,
+          onChanged: (v) => setState(() => _duration = v.round()),
+        ));
     }
     return Padding(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
       child: Column(
         children: [
           ...fields,
@@ -187,40 +241,6 @@ class _TrackTabState extends ConsumerState<_TrackTab> {
                     onPressed: _editingId == null ? null : _clear,
                     child: const Text('CLEAR')),
               ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _stepper(String label, String value, VoidCallback onMinus,
-      VoidCallback onPlus, VoidCallback onTapValue) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label,
-              style: TextStyle(
-                  color: Theme.of(context).colorScheme.primary,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12)),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              IconButton.filledTonal(
-                  onPressed: onMinus, icon: const Icon(Icons.remove)),
-              Expanded(
-                child: TextButton(
-                  onPressed: onTapValue,
-                  child: Text(value,
-                      style: const TextStyle(
-                          fontSize: 28, fontWeight: FontWeight.bold)),
-                ),
-              ),
-              IconButton.filledTonal(
-                  onPressed: onPlus, icon: const Icon(Icons.add)),
             ],
           ),
         ],
@@ -291,35 +311,6 @@ class _TrackTabState extends ConsumerState<_TrackTab> {
         );
       },
     );
-  }
-
-  // --- value mutations ---
-  void _addWeight(double d) =>
-      setState(() => _weight = (_weight + d).clamp(0.0, 1000000.0));
-  void _addReps(int d) => setState(() => _reps = (_reps + d).clamp(0, 100000));
-  void _addDistance(double d) =>
-      setState(() => _distance = (_distance + d).clamp(0.0, 1000000.0));
-  void _addDuration(int d) =>
-      setState(() => _duration = (_duration + d).clamp(0, 360000));
-
-  Future<void> _tapWeight() async {
-    final v = await _promptDouble('Weight (kg)', _weight);
-    if (v != null) setState(() => _weight = v);
-  }
-
-  Future<void> _tapReps() async {
-    final v = await _promptInt('Reps', _reps);
-    if (v != null) setState(() => _reps = v);
-  }
-
-  Future<void> _tapDistance() async {
-    final v = await _promptDouble('Distance (m)', _distance);
-    if (v != null) setState(() => _distance = v);
-  }
-
-  Future<void> _tapDuration() async {
-    final v = await _promptInt('Duration (seconds)', _duration);
-    if (v != null) setState(() => _duration = v);
   }
 
   Future<void> _save() async {
@@ -408,7 +399,8 @@ class _TrackTabState extends ConsumerState<_TrackTab> {
             autofocus: true,
             minLines: 1,
             maxLines: 3,
-            decoration: const InputDecoration(hintText: 'e.g. last rep partial')),
+            decoration:
+                const InputDecoration(hintText: 'e.g. last rep partial')),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context),
@@ -444,52 +436,115 @@ class _TrackTabState extends ConsumerState<_TrackTab> {
       await _repo.deleteSet(s.id);
     }
   }
+}
 
-  Future<double?> _promptDouble(String title, double initial) {
-    final ctrl = TextEditingController(text: Fmt.number(initial));
-    return showDialog<double>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () =>
-                  Navigator.pop(context, double.tryParse(ctrl.text)),
-              child: const Text('OK')),
+/// A label + inline-editable number with tight −/+ buttons either side.
+class _NumberStepper extends StatefulWidget {
+  const _NumberStepper({
+    required this.label,
+    required this.value,
+    required this.step,
+    required this.format,
+    required this.parse,
+    required this.onChanged,
+    required this.keyboardType,
+  });
+
+  final String label;
+  final double value;
+  final double step;
+  final String Function(double) format;
+  final double? Function(String) parse;
+  final ValueChanged<double> onChanged;
+  final TextInputType keyboardType;
+
+  @override
+  State<_NumberStepper> createState() => _NumberStepperState();
+}
+
+class _NumberStepperState extends State<_NumberStepper> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.format(widget.value));
+
+  @override
+  void didUpdateWidget(covariant _NumberStepper old) {
+    super.didUpdateWidget(old);
+    // Resync only when the value changed externally (buttons / prefill / edit),
+    // never while the user is typing the same value.
+    if (widget.value != old.value &&
+        widget.parse(_controller.text) != widget.value) {
+      _controller.text = widget.format(widget.value);
+      _controller.selection =
+          TextSelection.collapsed(offset: _controller.text.length);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _bump(double delta) {
+    final v = widget.value + delta;
+    widget.onChanged(v < 0 ? 0 : v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.label,
+              style: TextStyle(
+                  color: accent, fontWeight: FontWeight.bold, fontSize: 12)),
+          Divider(color: accent, thickness: 1.2, height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _btn(Icons.remove, () => _bump(-widget.step)),
+              const SizedBox(width: 14),
+              SizedBox(
+                width: 150,
+                child: TextField(
+                  controller: _controller,
+                  textAlign: TextAlign.center,
+                  keyboardType: widget.keyboardType,
+                  style: const TextStyle(
+                      fontSize: 30, fontWeight: FontWeight.bold),
+                  decoration: const InputDecoration(
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(vertical: 6)),
+                  onChanged: (t) {
+                    final v = widget.parse(t);
+                    if (v != null) widget.onChanged(v < 0 ? 0 : v);
+                  },
+                ),
+              ),
+              const SizedBox(width: 14),
+              _btn(Icons.add, () => _bump(widget.step)),
+            ],
+          ),
         ],
       ),
     );
   }
 
-  Future<int?> _promptInt(String title, int initial) {
-    final ctrl = TextEditingController(text: '$initial');
-    return showDialog<int>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          keyboardType: TextInputType.number,
+  Widget _btn(IconData icon, VoidCallback onTap) {
+    return SizedBox(
+      width: 56,
+      height: 48,
+      child: FilledButton.tonal(
+        onPressed: onTap,
+        style: FilledButton.styleFrom(
+          padding: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, int.tryParse(ctrl.text)),
-              child: const Text('OK')),
-        ],
+        child: Icon(icon),
       ),
     );
   }
 }
-
