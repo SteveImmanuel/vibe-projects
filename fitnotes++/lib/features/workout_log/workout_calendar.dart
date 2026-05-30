@@ -168,7 +168,7 @@ class _WorkoutCalendarState extends State<WorkoutCalendar> {
   }
 }
 
-/// Shared workout-calendar dialog. Returns the chosen day (or null).
+/// Full-page calendar. Returns the chosen day (or null).
 /// Pass [selectableDays] to restrict selection (Copy flow); omit it to allow
 /// any day (top-bar jump-to-date). Workout days always show their dots.
 Future<String?> showWorkoutCalendar(
@@ -180,22 +180,41 @@ Future<String?> showWorkoutCalendar(
   final colors =
       await ref.read(workoutRepositoryProvider).workoutDayCategoryColors();
   if (!context.mounted) return null;
-  return showDialog<String>(
-    context: context,
-    builder: (_) => Dialog(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 380),
-        child: SingleChildScrollView(
-          child: WorkoutCalendar(
-            dayColors: colors,
-            initialMonth: initialDate,
-            selectable: selectableDays == null
-                ? null
-                : (d) => selectableDays.contains(d),
-            onSelectDay: (d) => Navigator.pop(context, d),
-          ),
-        ),
+  return Navigator.of(context).push<String>(
+    MaterialPageRoute(
+      builder: (_) => _CalendarScreen(
+        dayColors: colors,
+        initialDate: initialDate,
+        selectableDays: selectableDays,
       ),
     ),
   );
+}
+
+class _CalendarScreen extends StatelessWidget {
+  const _CalendarScreen({
+    required this.dayColors,
+    required this.initialDate,
+    this.selectableDays,
+  });
+
+  final Map<String, List<int>> dayColors;
+  final String initialDate;
+  final Set<String>? selectableDays;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Calendar')),
+      body: SingleChildScrollView(
+        child: WorkoutCalendar(
+          dayColors: dayColors,
+          initialMonth: initialDate,
+          selectable:
+              selectableDays == null ? null : (d) => selectableDays!.contains(d),
+          onSelectDay: (d) => Navigator.pop(context, d),
+        ),
+      ),
+    );
+  }
 }

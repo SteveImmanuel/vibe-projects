@@ -38,7 +38,7 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
-  // Higher page index == earlier day, so swiping LEFT (next page) = yesterday.
+  // Swipe right => tomorrow, swipe left => yesterday.
   static const _basePage = 100000;
   late final String _baseDate;
   late final PageController _controller;
@@ -56,8 +56,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     super.dispose();
   }
 
-  int _pageFor(String iso) => _basePage - Dates.daysBetween(_baseDate, iso);
-  String _dateFor(int page) => Dates.shift(_baseDate, _basePage - page);
+  int _pageFor(String iso) => _basePage + Dates.daysBetween(_baseDate, iso);
+  String _dateFor(int page) => Dates.shift(_baseDate, page - _basePage);
 
   @override
   Widget build(BuildContext context) {
