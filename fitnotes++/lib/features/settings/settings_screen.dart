@@ -1,5 +1,5 @@
 import 'package:drift/drift.dart' show Value;
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -169,10 +169,9 @@ class SettingsScreen extends ConsumerWidget {
 
   Future<void> _import(BuildContext context, WidgetRef ref) async {
     final messenger = ScaffoldMessenger.of(context);
-    final result = await FilePicker.pickFiles();
-    if (result == null || result.files.isEmpty) return;
-    final path = result.files.first.path;
-    if (path == null) return;
+    final file = await openFile();
+    if (file == null) return;
+    final path = file.path;
     messenger.showSnackBar(const SnackBar(content: Text('Importing…')));
     try {
       final res = await FitNotesImporter(ref.read(databaseProvider))
