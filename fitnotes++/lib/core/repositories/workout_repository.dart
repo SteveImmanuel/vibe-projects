@@ -167,4 +167,48 @@ class WorkoutRepository {
     });
     return sets.length;
   }
+
+  /// Distinct workout days strictly before [date], newest first.
+  Future<List<String>> workoutDatesBefore(String date) async {
+    final rows = await db
+        .customSelect(
+          'SELECT DISTINCT date FROM workout_sets WHERE date < ? ORDER BY date DESC',
+          variables: [Variable.withString(date)],
+        )
+        .get();
+    return rows.map((r) => r.read<String>('date')).toList();
+  }
+
+  /// One-shot fetch of a day's sets (with exercise display info).
+  Future<List<LoggedSet>> dayLog(String date) => watchDayLog(date).first;
+
+  /// Copy the given sets (by id) into [targetDate], preserving their order.
+  Future<int> copySetsToDate(List<int> setIds, String targetDate) async {
+    if (setIds.isEmpty) return 0;
+    final rows = await (db.select(db.workoutSets)
+          ..where((s) => s.id.isIn(setIds)))
+        .get();
+    final byId = {for (final s in rows) s.id: s};
+    final ordered =
+        setIds.map((id) => byId[id]).whereType<WorkoutSet>().toList();
+    final now = DateTime.now();
+    await db.batch((b) {
+      for (final s in ordered) {
+        b.insert(
+          db.workoutSets,
+          WorkoutSetsCompanion.insert(
+            exerciseId: s.exerciseId,
+            date: targetDate,
+            createdAt: now,
+            rawWeight: Value(s.rawWeight),
+            weightMultiplier: Value(s.weightMultiplier),
+            reps: Value(s.reps),
+            distance: Value(s.distance),
+            durationSeconds: Value(s.durationSeconds),
+          ),
+        );
+      }
+    });
+    return ordered.length;
+  }
 }

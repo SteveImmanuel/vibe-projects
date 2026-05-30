@@ -5,6 +5,7 @@ import '../features/exercises/edit_exercise_screen.dart';
 import '../features/exercises/exercise_list_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/track/exercise_detail_screen.dart';
+import '../features/workout_log/copy_workout_screen.dart';
 import '../features/workout_log/home_screen.dart';
 
 final GoRouter appRouter = GoRouter(
@@ -16,6 +17,14 @@ final GoRouter appRouter = GoRouter(
     GoRoute(
       path: '/settings',
       builder: (_, _) => const SettingsScreen(),
+    ),
+    GoRoute(
+      path: '/copy',
+      builder: (_, state) => CopyWorkoutScreen(
+        targetDate: state.uri.queryParameters['date'] ?? Dates.today(),
+        sourceDate: state.uri.queryParameters['source'] ??
+            (state.uri.queryParameters['date'] ?? Dates.today()),
+      ),
     ),
     GoRoute(
       path: '/exercises',
