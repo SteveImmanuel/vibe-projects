@@ -100,31 +100,10 @@ class _WorkoutCalendarState extends State<WorkoutCalendar> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Expanded(
-          child: ListView.builder(
-            controller: _controller,
-            itemCount: _months.length,
-            itemBuilder: (_, i) => _monthBlock(_months[i]),
-          ),
-        ),
-        _footer(context),
-      ],
-    );
-  }
-
-  Widget _footer(BuildContext context) {
-    return Material(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      child: SizedBox(
-        height: 44,
-        child: Center(
-          child: Text('${widget.dayColors.length} WORKOUTS',
-              style: const TextStyle(
-                  fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-        ),
-      ),
+    return ListView.builder(
+      controller: _controller,
+      itemCount: _months.length,
+      itemBuilder: (_, i) => _monthBlock(_months[i]),
     );
   }
 
@@ -235,7 +214,7 @@ class _WorkoutCalendarState extends State<WorkoutCalendar> {
   }
 }
 
-class _CalendarScreen extends StatelessWidget {
+class _CalendarScreen extends StatefulWidget {
   const _CalendarScreen({
     required this.dayColors,
     required this.initialDate,
@@ -249,14 +228,31 @@ class _CalendarScreen extends StatelessWidget {
   final void Function(BuildContext, String) onDayTap;
 
   @override
+  State<_CalendarScreen> createState() => _CalendarScreenState();
+}
+
+class _CalendarScreenState extends State<_CalendarScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('${widget.dayColors.length} workouts'),
+        duration: const Duration(seconds: 2),
+      ));
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Calendar')),
       body: WorkoutCalendar(
-        dayColors: dayColors,
-        initialMonth: initialDate,
-        selectable: selectable,
-        onSelectDay: (d) => onDayTap(context, d),
+        dayColors: widget.dayColors,
+        initialMonth: widget.initialDate,
+        selectable: widget.selectable,
+        onSelectDay: (d) => widget.onDayTap(context, d),
       ),
     );
   }
