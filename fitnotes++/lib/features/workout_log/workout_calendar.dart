@@ -108,7 +108,8 @@ class _WorkoutCalendarState extends State<WorkoutCalendar> {
     final dateStr = Dates.iso(DateTime(_month.year, _month.month, day));
     final colors = widget.dayColors[dateStr] ?? const <int>[];
     final isToday = dateStr == Dates.today();
-    final canSelect = widget.selectable?.call(dateStr) ?? colors.isNotEmpty;
+    // No predicate => any day is selectable (used by the top-bar jump).
+    final canSelect = widget.selectable?.call(dateStr) ?? true;
 
     final cell = SizedBox(
       height: 48,
@@ -167,16 +168,17 @@ class _WorkoutCalendarState extends State<WorkoutCalendar> {
   }
 }
 
-/// Shows the workout calendar in a dialog and returns the chosen day (or null).
-/// Only days with a prior workout (before [targetDate]) are selectable.
-Future<String?> pickWorkoutDay(
+/// Shared workout-calendar dialog. Returns the chosen day (or null).
+/// Pass [selectableDays] to restrict selection (Copy flow); omit it to allow
+/// any day (top-bar jump-to-date). Workout days always show their dots.
+Future<String?> showWorkoutCalendar(
   BuildContext context,
   WidgetRef ref, {
-  required String targetDate,
+  required String initialDate,
+  Set<String>? selectableDays,
 }) async {
-  final repo = ref.read(workoutRepositoryProvider);
-  final colors = await repo.workoutDayCategoryColors();
-  final priors = (await repo.workoutDatesBefore(targetDate)).toSet();
+  final colors =
+      await ref.read(workoutRepositoryProvider).workoutDayCategoryColors();
   if (!context.mounted) return null;
   return showDialog<String>(
     context: context,
@@ -186,8 +188,10 @@ Future<String?> pickWorkoutDay(
         child: SingleChildScrollView(
           child: WorkoutCalendar(
             dayColors: colors,
-            initialMonth: priors.isEmpty ? targetDate : priors.reduce((a, b) => a.compareTo(b) > 0 ? a : b),
-            selectable: priors.contains,
+            initialMonth: initialDate,
+            selectable: selectableDays == null
+                ? null
+                : (d) => selectableDays.contains(d),
             onSelectDay: (d) => Navigator.pop(context, d),
           ),
         ),

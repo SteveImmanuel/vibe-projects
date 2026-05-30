@@ -34,4 +34,13 @@ class Dates {
   /// Calendar month header, e.g. "MAY 2026".
   static String monthLabel(DateTime month) =>
       DateFormat('MMMM yyyy').format(month).toUpperCase();
+
+  /// Whole calendar days from [from] to [to] (negative if [to] is earlier).
+  static int daysBetween(String from, String to) {
+    final a = parse(from);
+    final b = parse(to);
+    return DateTime(b.year, b.month, b.day)
+        .difference(DateTime(a.year, a.month, a.day))
+        .inDays;
+  }
 }

@@ -55,8 +55,10 @@ class _CopyWorkoutScreenState extends ConsumerState<CopyWorkoutScreen> {
   }
 
   Future<void> _changeSource() async {
-    final picked =
-        await pickWorkoutDay(context, ref, targetDate: widget.targetDate);
+    final priors = await _repo.workoutDatesBefore(widget.targetDate);
+    if (priors.isEmpty || !mounted) return;
+    final picked = await showWorkoutCalendar(context, ref,
+        initialDate: _source, selectableDays: priors.toSet());
     if (picked != null) await _loadSource(picked);
   }
 

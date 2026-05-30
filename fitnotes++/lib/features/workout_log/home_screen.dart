@@ -9,39 +9,83 @@ import '../../core/util/dates.dart';
 import '../../core/util/format.dart';
 import 'workout_calendar.dart';
 
-/// Tap-Copy flow: first a calendar (only days with prior workouts are
-/// selectable), then the granular copy screen for the chosen day.
+/// Copy flow: pick a source day from the shared dotted calendar (only days with
+/// a prior workout are selectable), then open the granular copy screen.
 Future<void> startCopyWorkout(
     BuildContext context, WidgetRef ref, String date) async {
   final messenger = ScaffoldMessenger.of(context);
-  final priors = await ref.read(workoutRepositoryProvider).workoutDatesBefore(date);
+  final priors =
+      await ref.read(workoutRepositoryProvider).workoutDatesBefore(date);
   if (priors.isEmpty) {
     messenger.showSnackBar(
         const SnackBar(content: Text('No previous workouts to copy')));
     return;
   }
   if (!context.mounted) return;
-  final picked = await pickWorkoutDay(context, ref, targetDate: date);
+  final picked = await showWorkoutCalendar(context, ref,
+      initialDate: priors.first, selectableDays: priors.toSet());
   if (picked == null || !context.mounted) return;
   context.push('/copy?date=$date&source=$picked');
 }
 
-/// The Workout Log home: a single day's logged exercises with date navigation.
-class HomeScreen extends ConsumerWidget {
+/// The Workout Log home. Days are pages in a [PageView] so swipes animate and
+/// vertical scrolling never changes the day.
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends ConsumerState<HomeScreen> {
+  // Higher page index == earlier day, so swiping LEFT (next page) = yesterday.
+  static const _basePage = 100000;
+  late final String _baseDate;
+  late final PageController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _baseDate = Dates.today();
+    _controller = PageController(initialPage: _pageFor(ref.read(selectedDateProvider)));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  int _pageFor(String iso) => _basePage - Dates.daysBetween(_baseDate, iso);
+  String _dateFor(int page) => Dates.shift(_baseDate, _basePage - page);
+
+  @override
+  Widget build(BuildContext context) {
+    // Keep the PageView in sync when the date changes from buttons/calendar.
+    ref.listen<String>(selectedDateProvider, (_, next) {
+      if (!_controller.hasClients) return;
+      final target = _pageFor(next);
+      final current =
+          (_controller.page ?? _controller.initialPage.toDouble()).round();
+      if (current == target) return;
+      if ((current - target).abs() > 1) {
+        _controller.jumpToPage(target);
+      } else {
+        _controller.animateToPage(target,
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeInOut);
+      }
+    });
+
     final date = ref.watch(selectedDateProvider);
-    final log = ref.watch(dayLogProvider(date));
     return Scaffold(
       appBar: AppBar(
         title: const Text('FitNotes++'),
         actions: [
           IconButton(
-            tooltip: 'Jump to date',
+            tooltip: 'Calendar',
             icon: const Icon(Icons.calendar_month_outlined),
-            onPressed: () => _pickDate(context, ref, date),
+            onPressed: () => _openCalendar(date),
           ),
           IconButton(
             tooltip: 'Add exercise',
@@ -72,31 +116,11 @@ class HomeScreen extends ConsumerWidget {
           _DateBar(date: date),
           const Divider(height: 1),
           Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              // Swipe left -> yesterday, swipe right -> tomorrow.
-              onHorizontalDragEnd: (d) {
-                final v = d.primaryVelocity ?? 0;
-                final notifier = ref.read(selectedDateProvider.notifier);
-                if (v < -120) {
-                  notifier.previous();
-                } else if (v > 120) {
-                  notifier.next();
-                }
-              },
-              child: log.when(
-                loading: () => const Center(child: CircularProgressIndicator()),
-                error: (e, _) => Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text('Could not load workout:\n$e',
-                        textAlign: TextAlign.center),
-                  ),
-                ),
-                data: (sets) => sets.isEmpty
-                    ? _EmptyLog(date: date)
-                    : _DayLog(date: date, sets: sets),
-              ),
+            child: PageView.builder(
+              controller: _controller,
+              onPageChanged: (p) =>
+                  ref.read(selectedDateProvider.notifier).set(_dateFor(p)),
+              itemBuilder: (_, page) => _DayPage(date: _dateFor(page)),
             ),
           ),
         ],
@@ -104,16 +128,10 @@ class HomeScreen extends ConsumerWidget {
     );
   }
 
-  Future<void> _pickDate(
-      BuildContext context, WidgetRef ref, String date) async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: Dates.parse(date),
-      firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
-    );
+  Future<void> _openCalendar(String date) async {
+    final picked = await showWorkoutCalendar(context, ref, initialDate: date);
     if (picked != null) {
-      ref.read(selectedDateProvider.notifier).set(Dates.iso(picked));
+      ref.read(selectedDateProvider.notifier).set(picked);
     }
   }
 }
@@ -142,6 +160,29 @@ class _DateBar extends ConsumerWidget {
         IconButton(
             icon: const Icon(Icons.chevron_right), onPressed: notifier.next),
       ],
+    );
+  }
+}
+
+/// One day's log, shown as a PageView page.
+class _DayPage extends ConsumerWidget {
+  const _DayPage({required this.date});
+  final String date;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final log = ref.watch(dayLogProvider(date));
+    return log.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child:
+              Text('Could not load workout:\n$e', textAlign: TextAlign.center),
+        ),
+      ),
+      data: (sets) =>
+          sets.isEmpty ? _EmptyLog(date: date) : _DayLog(date: date, sets: sets),
     );
   }
 }
@@ -222,8 +263,7 @@ class _ExerciseGroup extends ConsumerWidget {
         ref.watch(settingsProvider).asData?.value.trackPersonalRecords ?? true;
     final prIds =
         trackPr ? ref.watch(prSetIdsProvider(exerciseId)) : const <int>{};
-    final shown =
-        sets.length > _maxShown ? sets.sublist(0, _maxShown) : sets;
+    final shown = sets.length > _maxShown ? sets.sublist(0, _maxShown) : sets;
     final extra = sets.length - shown.length;
 
     return Card(
@@ -338,8 +378,8 @@ class _SetRow extends StatelessWidget {
         if (unit.isNotEmpty)
           TextSpan(
               text: ' $unit',
-              style: TextStyle(
-                  fontSize: 12, color: Theme.of(context).hintColor)),
+              style:
+                  TextStyle(fontSize: 12, color: Theme.of(context).hintColor)),
       ]),
       textAlign: TextAlign.right,
     );
