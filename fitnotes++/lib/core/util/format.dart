@@ -8,7 +8,18 @@ class Fmt {
   static String number(double v) =>
       v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
 
-  static String weight(double kg) => '${number(kg)} kg';
+  /// Weight value with at least one decimal, trimming only the needless
+  /// trailing zeros (20 -> "20.0", 122.5 -> "122.5", 1.25 -> "1.25").
+  static String weightValue(double kg) {
+    var s = kg.toStringAsFixed(3);
+    if (s.contains('.')) {
+      s = s.replaceFirst(RegExp(r'0+$'), '');
+      if (s.endsWith('.')) s += '0';
+    }
+    return s;
+  }
+
+  static String weight(double kg) => '${weightValue(kg)} kg';
 
   static String duration(int seconds) {
     final h = seconds ~/ 3600;

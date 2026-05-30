@@ -8,6 +8,31 @@ import '../../core/repositories/workout_repository.dart';
 import '../../core/util/dates.dart';
 import '../../core/util/format.dart';
 
+/// Tap-Copy flow: first a calendar (only days with prior workouts are
+/// selectable), then the granular copy screen for the chosen day.
+Future<void> startCopyWorkout(
+    BuildContext context, WidgetRef ref, String date) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final priors = await ref.read(workoutRepositoryProvider).workoutDatesBefore(date);
+  if (priors.isEmpty) {
+    messenger.showSnackBar(
+        const SnackBar(content: Text('No previous workouts to copy')));
+    return;
+  }
+  if (!context.mounted) return;
+  final priorSet = priors.toSet();
+  final picked = await showDatePicker(
+    context: context,
+    helpText: 'COPY FROM WORKOUT',
+    initialDate: Dates.parse(priors.first),
+    firstDate: Dates.parse(priors.last),
+    lastDate: Dates.parse(date),
+    selectableDayPredicate: (d) => priorSet.contains(Dates.iso(d)),
+  );
+  if (picked == null || !context.mounted) return;
+  context.push('/copy?date=$date&source=${Dates.iso(picked)}');
+}
+
 /// The Workout Log home: a single day's logged exercises with date navigation.
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -32,10 +57,17 @@ class HomeScreen extends ConsumerWidget {
           ),
           PopupMenuButton<String>(
             onSelected: (v) {
-              if (v == 'exercises') context.push('/exercises');
-              if (v == 'settings') context.push('/settings');
+              switch (v) {
+                case 'copy':
+                  startCopyWorkout(context, ref, date);
+                case 'exercises':
+                  context.push('/exercises');
+                case 'settings':
+                  context.push('/settings');
+              }
             },
             itemBuilder: (_) => const [
+              PopupMenuItem(value: 'copy', child: Text('Copy Workout')),
               PopupMenuItem(value: 'exercises', child: Text('All Exercises')),
               PopupMenuItem(value: 'settings', child: Text('Settings')),
             ],
@@ -47,18 +79,31 @@ class HomeScreen extends ConsumerWidget {
           _DateBar(date: date),
           const Divider(height: 1),
           Expanded(
-            child: log.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text('Could not load workout:\n$e',
-                      textAlign: TextAlign.center),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              // Swipe left -> yesterday, swipe right -> tomorrow.
+              onHorizontalDragEnd: (d) {
+                final v = d.primaryVelocity ?? 0;
+                final notifier = ref.read(selectedDateProvider.notifier);
+                if (v < -120) {
+                  notifier.previous();
+                } else if (v > 120) {
+                  notifier.next();
+                }
+              },
+              child: log.when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (e, _) => Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text('Could not load workout:\n$e',
+                        textAlign: TextAlign.center),
+                  ),
                 ),
+                data: (sets) => sets.isEmpty
+                    ? _EmptyLog(date: date)
+                    : _DayLog(date: date, sets: sets),
               ),
-              data: (sets) => sets.isEmpty
-                  ? _EmptyLog(date: date)
-                  : _DayLog(date: date, sets: sets),
             ),
           ),
         ],
@@ -133,16 +178,7 @@ class _EmptyLog extends ConsumerWidget {
           TextButton.icon(
             icon: const Icon(Icons.copy_all_outlined),
             label: const Text('Copy Previous Workout'),
-            onPressed: () async {
-              final messenger = ScaffoldMessenger.of(context);
-              final n = await ref
-                  .read(workoutRepositoryProvider)
-                  .copyPreviousWorkout(date);
-              messenger.showSnackBar(SnackBar(
-                  content: Text(n == 0
-                      ? 'No previous workout to copy'
-                      : 'Copied $n sets')));
-            },
+            onPressed: () => startCopyWorkout(context, ref, date),
           ),
         ],
       ),
@@ -160,14 +196,13 @@ class _DayLog extends StatelessWidget {
     final order = <int>[];
     final groups = <int, List<LoggedSet>>{};
     for (final s in sets) {
-      final id = s.set.exerciseId;
-      groups.putIfAbsent(id, () {
-        order.add(id);
+      groups.putIfAbsent(s.set.exerciseId, () {
+        order.add(s.set.exerciseId);
         return <LoggedSet>[];
       }).add(s);
     }
     return ListView(
-      padding: const EdgeInsets.only(bottom: 80),
+      padding: const EdgeInsets.fromLTRB(0, 4, 0, 80),
       children: [
         for (final id in order)
           _ExerciseGroup(date: date, exerciseId: id, sets: groups[id]!),
@@ -176,59 +211,144 @@ class _DayLog extends StatelessWidget {
   }
 }
 
-class _ExerciseGroup extends StatelessWidget {
+class _ExerciseGroup extends ConsumerWidget {
   const _ExerciseGroup(
       {required this.date, required this.exerciseId, required this.sets});
   final String date;
   final int exerciseId;
   final List<LoggedSet> sets;
 
+  static const _maxShown = 5;
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final first = sets.first;
     final type = ExerciseType.values[first.exerciseType];
+    final accent = Theme.of(context).colorScheme.primary;
+    final trackPr =
+        ref.watch(settingsProvider).asData?.value.trackPersonalRecords ?? true;
+    final prIds =
+        trackPr ? ref.watch(prSetIdsProvider(exerciseId)) : const <int>{};
+    final shown =
+        sets.length > _maxShown ? sets.sublist(0, _maxShown) : sets;
+    final extra = sets.length - shown.length;
+
     return Card(
-      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      margin: const EdgeInsets.fromLTRB(12, 6, 12, 6),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: () => context.push('/log/$exerciseId?date=$date'),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                CircleAvatar(radius: 6, backgroundColor: Color(first.colorArgb)),
-                const SizedBox(width: 8),
-                Expanded(
-                    child: Text(first.exerciseName,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 16))),
-                const Icon(Icons.chevron_right, size: 18),
-              ]),
-              const SizedBox(height: 6),
-              for (var i = 0; i < sets.length; i++)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Row(children: [
-                    SizedBox(
-                        width: 24,
-                        child: Text('${i + 1}',
-                            style:
-                                TextStyle(color: Theme.of(context).hintColor))),
-                    Text(describeSet(
-                      type: type,
-                      effectiveWeight: sets[i].effectiveWeight,
-                      reps: sets[i].set.reps,
-                      distance: sets[i].set.distance,
-                      durationSeconds: sets[i].set.durationSeconds,
-                    )),
-                  ]),
-                ),
-            ],
-          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+              child: Text(first.exerciseName,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w600)),
+            ),
+            Container(height: 1.5, color: accent),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+              child: Column(
+                children: [
+                  for (final s in shown)
+                    _SetRow(
+                        type: type,
+                        logged: s,
+                        accent: accent,
+                        isPr: prIds.contains(s.set.id)),
+                  if (extra > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: Text('$extra more',
+                            style: TextStyle(
+                                color: Theme.of(context).hintColor,
+                                fontStyle: FontStyle.italic)),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
+    );
+  }
+}
+
+class _SetRow extends StatelessWidget {
+  const _SetRow(
+      {required this.type,
+      required this.logged,
+      required this.accent,
+      required this.isPr});
+  final ExerciseType type;
+  final LoggedSet logged;
+  final Color accent;
+  final bool isPr;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 30,
+            child: isPr
+                ? Icon(Icons.emoji_events, size: 20, color: accent)
+                : null,
+          ),
+          for (final col in _columns())
+            Expanded(child: _valueUnit(context, col.$1, col.$2)),
+        ],
+      ),
+    );
+  }
+
+  List<(String, String)> _columns() {
+    final s = logged.set;
+    switch (type) {
+      case ExerciseType.weightAndReps:
+        return [
+          (Fmt.weightValue(logged.effectiveWeight), 'kgs'),
+          ('${s.reps}', 'reps'),
+        ];
+      case ExerciseType.repsOnly:
+        return [('${s.reps}', 'reps')];
+      case ExerciseType.distanceAndTime:
+        final km = s.distance >= 1000;
+        return [
+          (Fmt.weightValue(km ? s.distance / 1000 : s.distance), km ? 'km' : 'm'),
+          (Fmt.duration(s.durationSeconds), ''),
+        ];
+      case ExerciseType.timeOnly:
+        return [(Fmt.duration(s.durationSeconds), '')];
+    }
+  }
+
+  Widget _valueUnit(BuildContext context, String value, String unit) {
+    final scheme = Theme.of(context).colorScheme;
+    return Text.rich(
+      TextSpan(children: [
+        TextSpan(
+            text: value,
+            style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: scheme.onSurface)),
+        if (unit.isNotEmpty)
+          TextSpan(
+              text: ' $unit',
+              style: TextStyle(
+                  fontSize: 12, color: Theme.of(context).hintColor)),
+      ]),
+      textAlign: TextAlign.right,
     );
   }
 }
