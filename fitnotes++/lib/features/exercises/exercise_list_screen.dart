@@ -5,8 +5,8 @@ import 'package:go_router/go_router.dart';
 import '../../core/providers.dart';
 import '../../core/util/dates.dart';
 
-/// The exercise database. Doubles as a picker (pickMode) when adding an
-/// exercise to a workout.
+/// The exercise database / picker. Shows categories first (FitNotes-style),
+/// drilling into a category's exercises; searching looks across the scope.
 class ExerciseListScreen extends ConsumerStatefulWidget {
   const ExerciseListScreen({super.key, this.pickMode = false, this.date});
 
@@ -21,100 +21,123 @@ class ExerciseListScreen extends ConsumerStatefulWidget {
 class _ExerciseListScreenState extends ConsumerState<ExerciseListScreen> {
   String _search = '';
   int? _categoryId;
+  String? _categoryName;
+
+  void _openCategory(int id, String name) =>
+      setState(() {
+        _categoryId = id;
+        _categoryName = name;
+        _search = '';
+      });
+
+  void _backToCategories() => setState(() {
+        _categoryId = null;
+        _categoryName = null;
+        _search = '';
+      });
 
   @override
   Widget build(BuildContext context) {
-    final items = ref.watch(
-        exerciseListProvider((search: _search, categoryId: _categoryId)));
-    final categories = ref.watch(categoriesProvider);
+    final inCategory = _categoryId != null;
+    final searching = _search.trim().isNotEmpty;
+    final showExercises = inCategory || searching;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.pickMode ? 'Choose Exercise' : 'All Exercises'),
-        actions: [
-          IconButton(
-            tooltip: 'New exercise',
-            icon: const Icon(Icons.add),
-            onPressed: () => context.push('/exercises/edit'),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-            child: TextField(
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search),
-                hintText: 'Search',
-                border: OutlineInputBorder(),
-                isDense: true,
+    return PopScope(
+      canPop: !inCategory,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _backToCategories();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          leading: inCategory
+              ? IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: _backToCategories)
+              : null,
+          title: Text(inCategory
+              ? _categoryName!
+              : (widget.pickMode ? 'Choose Exercise' : 'All Exercises')),
+          actions: [
+            IconButton(
+              tooltip: 'New exercise',
+              icon: const Icon(Icons.add),
+              onPressed: () => context.push('/exercises/edit'),
+            ),
+          ],
+        ),
+        body: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              child: TextField(
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.search),
+                  hintText: 'Search exercises',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                onChanged: (v) => setState(() => _search = v),
               ),
-              onChanged: (v) => setState(() => _search = v),
             ),
-          ),
-          SizedBox(
-            height: 44,
-            child: categories.maybeWhen(
-              data: (cats) => ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      label: const Text('All'),
-                      selected: _categoryId == null,
-                      onSelected: (_) => setState(() => _categoryId = null),
-                    ),
-                  ),
-                  for (final c in cats)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        avatar: CircleAvatar(
-                            radius: 6, backgroundColor: Color(c.colorArgb)),
-                        label: Text(c.name),
-                        selected: _categoryId == c.id,
-                        onSelected: (_) => setState(() => _categoryId = c.id),
-                      ),
-                    ),
-                ],
-              ),
-              orElse: () => const SizedBox.shrink(),
+            const Divider(height: 1),
+            Expanded(
+              child: showExercises ? _exerciseList() : _categoryList(),
             ),
-          ),
-          const Divider(height: 1),
-          Expanded(
-            child: items.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(child: Text('$e')),
-              data: (list) => list.isEmpty
-                  ? const Center(child: Text('No exercises'))
-                  : ListView.separated(
-                      itemCount: list.length,
-                      separatorBuilder: (_, _) => const Divider(height: 1),
-                      itemBuilder: (_, i) {
-                        final e = list[i];
-                        return ListTile(
-                          leading: CircleAvatar(
-                              radius: 8, backgroundColor: Color(e.colorArgb)),
-                          title: Text(e.name),
-                          subtitle: Text(e.workoutCount == 0
-                              ? 'Never performed'
-                              : '${e.workoutCount} workouts • last ${e.lastDate}'),
-                          onTap: () => _onTap(e.id),
-                        );
-                      },
-                    ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  void _onTap(int id) {
+  Widget _categoryList() {
+    final categories = ref.watch(categoriesProvider);
+    return categories.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(child: Text('$e')),
+      data: (cats) => ListView.separated(
+        itemCount: cats.length,
+        separatorBuilder: (_, _) => const Divider(height: 1),
+        itemBuilder: (_, i) {
+          final c = cats[i];
+          return ListTile(
+            leading: CircleAvatar(radius: 12, backgroundColor: Color(c.colorArgb)),
+            title: Text(c.name),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _openCategory(c.id, c.name),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _exerciseList() {
+    final items = ref.watch(
+        exerciseListProvider((search: _search, categoryId: _categoryId)));
+    return items.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(child: Text('$e')),
+      data: (list) => list.isEmpty
+          ? const Center(child: Text('No exercises'))
+          : ListView.separated(
+              itemCount: list.length,
+              separatorBuilder: (_, _) => const Divider(height: 1),
+              itemBuilder: (_, i) {
+                final e = list[i];
+                return ListTile(
+                  leading: CircleAvatar(
+                      radius: 8, backgroundColor: Color(e.colorArgb)),
+                  title: Text(e.name),
+                  subtitle: Text(e.workoutCount == 0
+                      ? 'Never performed'
+                      : '${e.workoutCount} workouts • last ${e.lastDate}'),
+                  onTap: () => _onTapExercise(e.id),
+                );
+              },
+            ),
+    );
+  }
+
+  void _onTapExercise(int id) {
     final date = widget.date ?? Dates.today();
     if (widget.pickMode) {
       context.pushReplacement('/log/$id?date=$date');

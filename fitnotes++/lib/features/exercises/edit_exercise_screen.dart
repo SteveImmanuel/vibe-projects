@@ -74,7 +74,11 @@ class _EditExerciseScreenState extends ConsumerState<EditExerciseScreen> {
                 controller: _nameCtrl,
                 textCapitalization: TextCapitalization.words,
                 decoration: const InputDecoration(
-                    labelText: 'Name', border: OutlineInputBorder()),
+                    labelText: 'Name',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 12, vertical: 14)),
               ),
               const SizedBox(height: 16),
               Row(
@@ -82,7 +86,11 @@ class _EditExerciseScreenState extends ConsumerState<EditExerciseScreen> {
                   Expanded(
                     child: InputDecorator(
                       decoration: const InputDecoration(
-                          labelText: 'Category', border: OutlineInputBorder()),
+                          labelText: 'Category',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 14)),
                       child: DropdownButtonHideUnderline(
                         child: DropdownButton<int>(
                           isExpanded: true,
@@ -115,7 +123,11 @@ class _EditExerciseScreenState extends ConsumerState<EditExerciseScreen> {
               const SizedBox(height: 16),
               InputDecorator(
                 decoration: const InputDecoration(
-                    labelText: 'Type', border: OutlineInputBorder()),
+                    labelText: 'Type',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 12, vertical: 14)),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<ExerciseType>(
                     isExpanded: true,
@@ -136,7 +148,10 @@ class _EditExerciseScreenState extends ConsumerState<EditExerciseScreen> {
                 maxLines: 4,
                 decoration: const InputDecoration(
                     labelText: 'Notes (optional)',
-                    border: OutlineInputBorder()),
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 12, vertical: 14)),
               ),
             ],
           );
