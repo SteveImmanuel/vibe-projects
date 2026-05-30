@@ -14,5 +14,5 @@ Here are the current list of projects:
 
 | Name | Short Description | LLM |
 |------|-------------------|-----|
-| [extradim](./extradim/) | Android app that applies a dimming overlay to reduce screen brightness below hardware minimum | Claude Opus 4.5 |
-| [scrollmuch](./scrollmuch/) | Android app that tracks how much you scroll across all apps, measured in meters | Claude Opus 4.5 |
+| [extradim](./extradim/) | Android app that applies a dimming overlay to reduce screen brightness below hardware minimum | Claude Opus 4.5 + Opus 4.8 |
+| [scrollmuch](./scrollmuch/) | Android app that tracks how much you scroll across all apps, measured in meters | Claude Opus 4.5 + Opus 4.8 |
