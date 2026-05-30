@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/database/tables.dart';
 import '../../core/providers.dart';
+import '../../core/repositories/workout_repository.dart';
 import '../../core/util/dates.dart';
+import '../../core/util/format.dart';
 
-/// A month calendar that marks each workout day with its category-color dots
-/// (mirrors FitNotes' calendar). Tapping a selectable day calls [onSelectDay].
+/// A vertically-scrolling, continuous month calendar that marks each workout
+/// day with its category-color dots (mirrors FitNotes). Tapping a selectable
+/// day calls [onSelectDay].
 class WorkoutCalendar extends StatefulWidget {
   const WorkoutCalendar({
     super.key,
@@ -15,7 +19,6 @@ class WorkoutCalendar extends StatefulWidget {
     this.selectable,
   });
 
-  /// date (yyyy-MM-dd) -> category color ARGB ints for that day.
   final Map<String, List<int>> dayColors;
   final void Function(String isoDate) onSelectDay;
   final String? initialMonth;
@@ -26,156 +29,246 @@ class WorkoutCalendar extends StatefulWidget {
 }
 
 class _WorkoutCalendarState extends State<WorkoutCalendar> {
-  late DateTime _month;
+  // Fixed sub-heights so the initial scroll offset can be computed exactly.
+  static const _headerH = 48.0;
+  static const _weekdayH = 26.0;
+  static const _cellH = 48.0;
+  static const _padH = 8.0;
+  static const _weekdays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
-  static const _weekdays = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  late final List<DateTime> _months;
+  late final ScrollController _controller;
 
   @override
   void initState() {
     super.initState();
-    final base = Dates.parse(widget.initialMonth ?? Dates.today());
-    _month = DateTime(base.year, base.month);
+    _months = _buildMonths();
+    _controller = ScrollController(initialScrollOffset: _offsetTo(_initialIndex()));
   }
 
-  void _shiftMonth(int delta) =>
-      setState(() => _month = DateTime(_month.year, _month.month + delta));
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  List<DateTime> _buildMonths() {
+    final refs = <DateTime>[
+      ...widget.dayColors.keys.map(Dates.parse),
+      Dates.parse(widget.initialMonth ?? Dates.today()),
+      Dates.parse(Dates.today()),
+    ];
+    var minD = refs.first, maxD = refs.first;
+    for (final d in refs) {
+      if (d.isBefore(minD)) minD = d;
+      if (d.isAfter(maxD)) maxD = d;
+    }
+    final start = DateTime(minD.year, minD.month);
+    final end = DateTime(maxD.year, maxD.month + 2); // small future buffer
+    final out = <DateTime>[];
+    var m = start;
+    while (!m.isAfter(end)) {
+      out.add(m);
+      m = DateTime(m.year, m.month + 1);
+    }
+    return out;
+  }
+
+  int _weeks(DateTime m) {
+    final days = DateTime(m.year, m.month + 1, 0).day;
+    final leading = DateTime(m.year, m.month, 1).weekday - 1; // Mon = 0
+    return ((leading + days) / 7).ceil();
+  }
+
+  double _monthHeight(DateTime m) =>
+      _headerH + _weekdayH + _weeks(m) * _cellH + _padH;
+
+  int _initialIndex() {
+    final ref = Dates.parse(widget.initialMonth ?? Dates.today());
+    final i = _months
+        .indexWhere((m) => m.year == ref.year && m.month == ref.month);
+    return i < 0 ? 0 : i;
+  }
+
+  double _offsetTo(int index) {
+    var o = 0.0;
+    for (var i = 0; i < index; i++) {
+      o += _monthHeight(_months[i]);
+    }
+    return o;
+  }
 
   @override
   Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Expanded(
+          child: ListView.builder(
+            controller: _controller,
+            itemCount: _months.length,
+            itemBuilder: (_, i) => _monthBlock(_months[i]),
+          ),
+        ),
+        _footer(context),
+      ],
+    );
+  }
+
+  Widget _footer(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: SizedBox(
+        height: 44,
+        child: Center(
+          child: Text('${widget.dayColors.length} WORKOUTS',
+              style: const TextStyle(
+                  fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+        ),
+      ),
+    );
+  }
+
+  Widget _monthBlock(DateTime m) {
     final theme = Theme.of(context);
-    final daysInMonth = DateTime(_month.year, _month.month + 1, 0).day;
-    final leading = DateTime(_month.year, _month.month, 1).weekday - 1; // Mon=0
+    final weeks = _weeks(m);
+    final days = DateTime(m.year, m.month + 1, 0).day;
+    final leading = DateTime(m.year, m.month, 1).weekday - 1;
     final cells = <int?>[
       ...List.filled(leading, null),
-      for (var d = 1; d <= daysInMonth; d++) d,
+      for (var d = 1; d <= days; d++) d,
     ];
-    while (cells.length % 7 != 0) {
+    while (cells.length < weeks * 7) {
       cells.add(null);
     }
-
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              IconButton(
-                  icon: const Icon(Icons.chevron_left),
-                  onPressed: () => _shiftMonth(-1)),
-              Expanded(
-                child: Center(
-                  child: Text(
-                    Dates.monthLabel(_month),
-                    style: theme.textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
-              IconButton(
-                  icon: const Icon(Icons.chevron_right),
-                  onPressed: () => _shiftMonth(1)),
-            ],
+    return Column(
+      children: [
+        SizedBox(
+          height: _headerH,
+          child: Center(
+            child: Text(Dates.monthLabel(m),
+                style: theme.textTheme.titleMedium
+                    ?.copyWith(fontWeight: FontWeight.bold)),
           ),
-          Row(
+        ),
+        SizedBox(
+          height: _weekdayH,
+          child: Row(
             children: [
               for (final w in _weekdays)
                 Expanded(
                   child: Center(
                     child: Text(w,
-                        style: TextStyle(
-                            fontSize: 12, color: theme.hintColor)),
+                        style:
+                            TextStyle(fontSize: 11, color: theme.hintColor)),
                   ),
                 ),
             ],
           ),
-          const SizedBox(height: 4),
-          for (var i = 0; i < cells.length; i += 7)
-            Row(
+        ),
+        for (var i = 0; i < cells.length; i += 7)
+          SizedBox(
+            height: _cellH,
+            child: Row(
               children: [
                 for (var j = i; j < i + 7; j++)
-                  Expanded(child: _cell(cells[j])),
+                  Expanded(child: _cell(m, cells[j])),
               ],
             ),
-        ],
-      ),
+          ),
+        const SizedBox(height: _padH),
+      ],
     );
   }
 
-  Widget _cell(int? day) {
-    if (day == null) return const SizedBox(height: 48);
+  Widget _cell(DateTime m, int? day) {
+    if (day == null) return const SizedBox.shrink();
     final theme = Theme.of(context);
-    final dateStr = Dates.iso(DateTime(_month.year, _month.month, day));
+    final dateStr = Dates.iso(DateTime(m.year, m.month, day));
     final colors = widget.dayColors[dateStr] ?? const <int>[];
     final isToday = dateStr == Dates.today();
-    // No predicate => any day is selectable (used by the top-bar jump).
     final canSelect = widget.selectable?.call(dateStr) ?? true;
 
-    final cell = SizedBox(
-      height: 48,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 28,
-            height: 28,
-            alignment: Alignment.center,
-            decoration: isToday
-                ? BoxDecoration(
-                    color: theme.colorScheme.primary, shape: BoxShape.circle)
-                : null,
-            child: Text(
-              '$day',
+    final content = Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Container(
+          width: 30,
+          height: 30,
+          alignment: Alignment.center,
+          decoration: isToday
+              ? BoxDecoration(
+                  color: theme.colorScheme.primary, shape: BoxShape.circle)
+              : null,
+          child: Text('$day',
               style: TextStyle(
-                color: isToday
-                    ? theme.colorScheme.onPrimary
-                    : (canSelect
-                        ? theme.colorScheme.onSurface
-                        : theme.disabledColor),
-              ),
-            ),
-          ),
-          const SizedBox(height: 3),
-          SizedBox(
-            height: 6,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                for (final c in colors.take(4))
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 1),
-                    child: Container(
-                      width: 5,
-                      height: 5,
-                      decoration: BoxDecoration(
-                          color: Color(c), shape: BoxShape.circle),
-                    ),
+                  color: isToday
+                      ? theme.colorScheme.onPrimary
+                      : (canSelect
+                          ? theme.colorScheme.onSurface
+                          : theme.disabledColor))),
+        ),
+        const SizedBox(height: 3),
+        SizedBox(
+          height: 6,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (final c in colors.take(4))
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 1),
+                  child: Container(
+                    width: 5,
+                    height: 5,
+                    decoration:
+                        BoxDecoration(color: Color(c), shape: BoxShape.circle),
                   ),
-              ],
-            ),
+                ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
 
-    if (!canSelect) return Opacity(opacity: 0.4, child: cell);
-    return InkWell(
-      borderRadius: BorderRadius.circular(8),
-      onTap: () => widget.onSelectDay(dateStr),
-      child: cell,
+    if (!canSelect) return content;
+    return InkWell(onTap: () => widget.onSelectDay(dateStr), child: content);
+  }
+}
+
+class _CalendarScreen extends StatelessWidget {
+  const _CalendarScreen({
+    required this.dayColors,
+    required this.initialDate,
+    required this.onDayTap,
+    this.selectable,
+  });
+
+  final Map<String, List<int>> dayColors;
+  final String initialDate;
+  final bool Function(String)? selectable;
+  final void Function(BuildContext, String) onDayTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Calendar')),
+      body: WorkoutCalendar(
+        dayColors: dayColors,
+        initialMonth: initialDate,
+        selectable: selectable,
+        onSelectDay: (d) => onDayTap(context, d),
+      ),
     );
   }
 }
 
-/// Full-page calendar. Returns the chosen day (or null).
-/// Pass [selectableDays] to restrict selection (Copy flow); omit it to allow
-/// any day (top-bar jump-to-date). Workout days always show their dots.
-Future<String?> showWorkoutCalendar(
+/// Browse calendar (top-bar icon). Tapping a workout day shows its workout with
+/// a Go To action; tapping an empty day jumps straight there. Returns the day
+/// to navigate to (or null).
+Future<String?> openWorkoutCalendar(
   BuildContext context,
   WidgetRef ref, {
   required String initialDate,
-  Set<String>? selectableDays,
 }) async {
   final colors =
       await ref.read(workoutRepositoryProvider).workoutDayCategoryColors();
@@ -185,36 +278,155 @@ Future<String?> showWorkoutCalendar(
       builder: (_) => _CalendarScreen(
         dayColors: colors,
         initialDate: initialDate,
-        selectableDays: selectableDays,
+        onDayTap: (ctx, d) async {
+          if (colors.containsKey(d)) {
+            final go = await _showDayDetail(ctx, ref, d);
+            if (go == true && ctx.mounted) Navigator.of(ctx).pop(d);
+          } else {
+            Navigator.of(ctx).pop(d);
+          }
+        },
       ),
     ),
   );
 }
 
-class _CalendarScreen extends StatelessWidget {
-  const _CalendarScreen({
-    required this.dayColors,
-    required this.initialDate,
-    this.selectableDays,
-  });
+/// Copy day-picker: only [selectableDays] are tappable; tapping returns the day.
+Future<String?> pickCopyDay(
+  BuildContext context,
+  WidgetRef ref, {
+  required String initialDate,
+  required Set<String> selectableDays,
+}) async {
+  final colors =
+      await ref.read(workoutRepositoryProvider).workoutDayCategoryColors();
+  if (!context.mounted) return null;
+  return Navigator.of(context).push<String>(
+    MaterialPageRoute(
+      builder: (_) => _CalendarScreen(
+        dayColors: colors,
+        initialDate: initialDate,
+        selectable: selectableDays.contains,
+        onDayTap: (ctx, d) => Navigator.of(ctx).pop(d),
+      ),
+    ),
+  );
+}
 
-  final Map<String, List<int>> dayColors;
-  final String initialDate;
-  final Set<String>? selectableDays;
+Future<bool?> _showDayDetail(
+    BuildContext context, WidgetRef ref, String date) async {
+  final sets = await ref.read(workoutRepositoryProvider).dayLog(date);
+  if (!context.mounted) return null;
+  return showDialog<bool>(
+    context: context,
+    builder: (_) => _DayDetailDialog(date: date, sets: sets),
+  );
+}
+
+class _DayDetailDialog extends StatelessWidget {
+  const _DayDetailDialog({required this.date, required this.sets});
+  final String date;
+  final List<LoggedSet> sets;
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Calendar')),
-      body: SingleChildScrollView(
-        child: WorkoutCalendar(
-          dayColors: dayColors,
-          initialMonth: initialDate,
-          selectable:
-              selectableDays == null ? null : (d) => selectableDays!.contains(d),
-          onSelectDay: (d) => Navigator.pop(context, d),
-        ),
+    final accent = Theme.of(context).colorScheme.primary;
+    final order = <int>[];
+    final groups = <int, List<LoggedSet>>{};
+    for (final s in sets) {
+      groups.putIfAbsent(s.set.exerciseId, () {
+        order.add(s.set.exerciseId);
+        return <LoggedSet>[];
+      }).add(s);
+    }
+    return AlertDialog(
+      title: Text(Dates.longDate(date), style: TextStyle(color: accent)),
+      contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: sets.isEmpty
+            ? const Text('No workout on this day')
+            : SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final id in order)
+                      ..._exerciseBlock(context, groups[id]!, accent),
+                  ],
+                ),
+              ),
       ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel')),
+        FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Go To')),
+      ],
     );
+  }
+
+  List<Widget> _exerciseBlock(
+      BuildContext context, List<LoggedSet> ex, Color accent) {
+    final type = ExerciseType.values[ex.first.exerciseType];
+    return [
+      Padding(
+        padding: const EdgeInsets.only(top: 14, bottom: 4),
+        child: Text(ex.first.exerciseName.toUpperCase(),
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+      ),
+      Container(height: 1.5, color: accent),
+      for (final s in ex)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              for (final col in _columns(type, s))
+                Expanded(
+                  child: Text.rich(
+                    TextSpan(children: [
+                      TextSpan(
+                          text: col.$1,
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: Theme.of(context).colorScheme.onSurface)),
+                      if (col.$2.isNotEmpty)
+                        TextSpan(
+                            text: ' ${col.$2}',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: Theme.of(context).hintColor)),
+                    ]),
+                    textAlign: TextAlign.right,
+                  ),
+                ),
+            ],
+          ),
+        ),
+    ];
+  }
+
+  List<(String, String)> _columns(ExerciseType type, LoggedSet s) {
+    switch (type) {
+      case ExerciseType.weightAndReps:
+        return [
+          (Fmt.weightValue(s.effectiveWeight), 'kgs'),
+          ('${s.set.reps}', 'reps'),
+        ];
+      case ExerciseType.repsOnly:
+        return [('${s.set.reps}', 'reps')];
+      case ExerciseType.distanceAndTime:
+        final km = s.set.distance >= 1000;
+        return [
+          (Fmt.weightValue(km ? s.set.distance / 1000 : s.set.distance),
+              km ? 'km' : 'm'),
+          (Fmt.duration(s.set.durationSeconds), ''),
+        ];
+      case ExerciseType.timeOnly:
+        return [(Fmt.duration(s.set.durationSeconds), '')];
+    }
   }
 }

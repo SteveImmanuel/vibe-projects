@@ -22,7 +22,7 @@ Future<void> startCopyWorkout(
     return;
   }
   if (!context.mounted) return;
-  final picked = await showWorkoutCalendar(context, ref,
+  final picked = await pickCopyDay(context, ref,
       initialDate: priors.first, selectableDays: priors.toSet());
   if (picked == null || !context.mounted) return;
   context.push('/copy?date=$date&source=$picked');
@@ -129,7 +129,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> _openCalendar(String date) async {
-    final picked = await showWorkoutCalendar(context, ref, initialDate: date);
+    final picked = await openWorkoutCalendar(context, ref, initialDate: date);
     if (picked != null) {
       ref.read(selectedDateProvider.notifier).set(picked);
     }

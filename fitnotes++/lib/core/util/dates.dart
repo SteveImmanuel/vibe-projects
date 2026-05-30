@@ -35,6 +35,10 @@ class Dates {
   static String monthLabel(DateTime month) =>
       DateFormat('MMMM yyyy').format(month).toUpperCase();
 
+  /// Day-detail title, e.g. "Wednesday, May 13 2026".
+  static String longDate(String isoDate) =>
+      DateFormat('EEEE, MMMM d yyyy').format(parse(isoDate));
+
   /// Whole calendar days from [from] to [to] (negative if [to] is earlier).
   static int daysBetween(String from, String to) {
     final a = parse(from);
