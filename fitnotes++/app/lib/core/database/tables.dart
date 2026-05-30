@@ -1,0 +1,121 @@
+import 'package:drift/drift.dart';
+
+/// How an exercise is recorded. Index values intentionally mirror FitNotes'
+/// `exercise_type_id` for the common cases (0=W&R, 1=Dist&Time, 3=Time-only),
+/// which keeps `.fitnotes` import a direct mapping.
+enum ExerciseType {
+  weightAndReps, // 0
+  distanceAndTime, // 1
+  repsOnly, // 2
+  timeOnly, // 3
+}
+
+@DataClassName('Category')
+class Categories extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get name => text().withLength(min: 1, max: 80)();
+
+  /// Packed ARGB color (unsigned, e.g. 0xFF2980B9).
+  IntColumn get colorArgb =>
+      integer().withDefault(const Constant(0xFF7F8C8D))();
+  IntColumn get sortOrder => integer().withDefault(const Constant(0))();
+}
+
+@DataClassName('Exercise')
+class Exercises extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get name => text().withLength(min: 1, max: 120)();
+  IntColumn get categoryId => integer().references(Categories, #id)();
+  IntColumn get type =>
+      intEnum<ExerciseType>().withDefault(const Constant(0))();
+  TextColumn get notes => text().nullable()();
+  IntColumn get defaultRestTimeSeconds => integer().nullable()();
+  BoolColumn get isFavourite => boolean().withDefault(const Constant(false))();
+  BoolColumn get archived => boolean().withDefault(const Constant(false))();
+  IntColumn get sortOrder => integer().withDefault(const Constant(0))();
+}
+
+/// FEATURE 1 (dormant in v1): named multipliers per exercise. The effective
+/// weight of a set is `rawWeight * product(enabled multipliers)`.
+@DataClassName('ExerciseMultiplier')
+class ExerciseMultipliers extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get exerciseId => integer().references(Exercises, #id)();
+  TextColumn get label => text()();
+  RealColumn get factor => real().withDefault(const Constant(1.0))();
+  BoolColumn get enabled => boolean().withDefault(const Constant(true))();
+  IntColumn get sortOrder => integer().withDefault(const Constant(0))();
+}
+
+@DataClassName('WorkoutSet')
+class WorkoutSets extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get exerciseId => integer().references(Exercises, #id)();
+
+  /// Calendar day, `yyyy-MM-dd`.
+  TextColumn get date => text()();
+
+  /// The number the user actually entered (before any multiplier).
+  RealColumn get rawWeight => real().withDefault(const Constant(0))();
+
+  /// Product of the exercise's multipliers applied at log time. 1.0 in v1.
+  /// `effectiveWeight = rawWeight * weightMultiplier`.
+  RealColumn get weightMultiplier =>
+      real().withDefault(const Constant(1.0))();
+  IntColumn get reps => integer().withDefault(const Constant(0))();
+  RealColumn get distance => real().withDefault(const Constant(0))();
+  IntColumn get durationSeconds => integer().withDefault(const Constant(0))();
+  BoolColumn get isComplete => boolean().withDefault(const Constant(false))();
+  TextColumn get note => text().nullable()();
+  DateTimeColumn get createdAt => dateTime()();
+}
+
+@DataClassName('WorkoutDayNote')
+class WorkoutDayNotes extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get date => text().unique()(); // yyyy-MM-dd
+  TextColumn get comment => text()();
+}
+
+/// FEATURE 2 (dormant in v1): a global PR "reset" marker. PR queries take a
+/// `sinceDate`; in v1 it's the epoch (all-time). Later, the latest reset date
+/// becomes the `sinceDate` for the "current period", while all-time stays
+/// queryable. Old records are never deleted.
+@DataClassName('PrResetMarker')
+class PrResetMarkers extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get date => text()(); // yyyy-MM-dd
+  TextColumn get note => text().nullable()();
+  DateTimeColumn get createdAt => dateTime()();
+}
+
+/// Single-row settings table (id always 1).
+@DataClassName('AppSettingsRow')
+class AppSettings extends Table {
+  IntColumn get id => integer().withDefault(const Constant(1))();
+  IntColumn get themeMode =>
+      integer().withDefault(const Constant(0))(); // 0 system / 1 light / 2 dark
+  IntColumn get firstDayOfWeek =>
+      integer().withDefault(const Constant(1))(); // ISO: 1=Mon .. 7=Sun
+  RealColumn get defaultWeightIncrement =>
+      real().withDefault(const Constant(2.5))();
+  IntColumn get restTimerSeconds =>
+      integer().withDefault(const Constant(60))();
+  BoolColumn get restTimerVibrate =>
+      boolean().withDefault(const Constant(false))();
+  BoolColumn get restTimerSound =>
+      boolean().withDefault(const Constant(true))();
+  BoolColumn get restTimerAutoStart =>
+      boolean().withDefault(const Constant(false))();
+  BoolColumn get trackPersonalRecords =>
+      boolean().withDefault(const Constant(true))();
+  BoolColumn get markSetsComplete =>
+      boolean().withDefault(const Constant(false))();
+  BoolColumn get keepScreenOn =>
+      boolean().withDefault(const Constant(false))();
+  IntColumn get estimated1rmMaxReps =>
+      integer().withDefault(const Constant(0))(); // 0 = no cap
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
