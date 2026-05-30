@@ -211,4 +211,23 @@ class WorkoutRepository {
     });
     return ordered.length;
   }
+
+  /// For every workout day, the distinct category colors trained that day
+  /// (ordered by category) — used to render calendar dots.
+  Future<Map<String, List<int>>> workoutDayCategoryColors() async {
+    final rows = await db.customSelect(
+      'SELECT s.date AS date, c.color_argb AS color '
+      'FROM workout_sets s '
+      'JOIN exercises e ON e.id = s.exercise_id '
+      'JOIN categories c ON c.id = e.category_id '
+      'GROUP BY s.date, c.id '
+      'ORDER BY s.date, c.sort_order, c.id',
+      readsFrom: {db.workoutSets, db.exercises, db.categories},
+    ).get();
+    final map = <String, List<int>>{};
+    for (final r in rows) {
+      (map[r.read<String>('date')] ??= []).add(r.read<int>('color'));
+    }
+    return map;
+  }
 }

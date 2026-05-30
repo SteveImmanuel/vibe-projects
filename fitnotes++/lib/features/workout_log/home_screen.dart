@@ -7,6 +7,7 @@ import '../../core/providers.dart';
 import '../../core/repositories/workout_repository.dart';
 import '../../core/util/dates.dart';
 import '../../core/util/format.dart';
+import 'workout_calendar.dart';
 
 /// Tap-Copy flow: first a calendar (only days with prior workouts are
 /// selectable), then the granular copy screen for the chosen day.
@@ -20,17 +21,9 @@ Future<void> startCopyWorkout(
     return;
   }
   if (!context.mounted) return;
-  final priorSet = priors.toSet();
-  final picked = await showDatePicker(
-    context: context,
-    helpText: 'COPY FROM WORKOUT',
-    initialDate: Dates.parse(priors.first),
-    firstDate: Dates.parse(priors.last),
-    lastDate: Dates.parse(date),
-    selectableDayPredicate: (d) => priorSet.contains(Dates.iso(d)),
-  );
+  final picked = await pickWorkoutDay(context, ref, targetDate: date);
   if (picked == null || !context.mounted) return;
-  context.push('/copy?date=$date&source=${Dates.iso(picked)}');
+  context.push('/copy?date=$date&source=$picked');
 }
 
 /// The Workout Log home: a single day's logged exercises with date navigation.

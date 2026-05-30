@@ -30,4 +30,8 @@ class Dates {
   /// Long header used for grouped history sections.
   static String sectionHeader(String isoDate) =>
       DateFormat('EEEE, d MMMM yyyy').format(parse(isoDate)).toUpperCase();
+
+  /// Calendar month header, e.g. "MAY 2026".
+  static String monthLabel(DateTime month) =>
+      DateFormat('MMMM yyyy').format(month).toUpperCase();
 }

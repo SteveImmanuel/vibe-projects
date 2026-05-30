@@ -7,6 +7,7 @@ import '../../core/providers.dart';
 import '../../core/repositories/workout_repository.dart';
 import '../../core/util/dates.dart';
 import '../../core/util/format.dart';
+import 'workout_calendar.dart';
 
 /// Step 2 of copy: granular selection (Select All / per-exercise / per-set)
 /// for a chosen source day. The day is picked via a calendar (step 1) before
@@ -54,18 +55,9 @@ class _CopyWorkoutScreenState extends ConsumerState<CopyWorkoutScreen> {
   }
 
   Future<void> _changeSource() async {
-    final priors = await _repo.workoutDatesBefore(widget.targetDate);
-    if (priors.isEmpty || !mounted) return;
-    final priorSet = priors.toSet();
-    final picked = await showDatePicker(
-      context: context,
-      helpText: 'COPY FROM WORKOUT',
-      initialDate: Dates.parse(_source),
-      firstDate: Dates.parse(priors.last),
-      lastDate: Dates.parse(widget.targetDate),
-      selectableDayPredicate: (d) => priorSet.contains(Dates.iso(d)),
-    );
-    if (picked != null) await _loadSource(Dates.iso(picked));
+    final picked =
+        await pickWorkoutDay(context, ref, targetDate: widget.targetDate);
+    if (picked != null) await _loadSource(picked);
   }
 
   @override
