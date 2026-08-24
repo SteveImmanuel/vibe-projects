@@ -69,7 +69,3 @@ npm run check   # compile + tests + lint
 ```
 
 Press <kbd>F5</kbd> to launch an Extension Development Host. Architecture and invariants are documented in [AGENTS.md](./AGENTS.md).
-
-## License
-
-[MIT](./LICENSE)
