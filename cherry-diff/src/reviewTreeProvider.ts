@@ -1,78 +1,72 @@
 import * as vscode from 'vscode';
+import { getChangedLineRange, getFirstChangedLine } from './diffService';
 import { ReviewManager } from './reviewManager';
 import type { FileReview, HunkReview } from './types';
-import { getChangedLineRange, getFirstChangedLine } from './diffService';
 
 export type ReviewTreeItem = FileTreeItem | HunkTreeItem;
 
 export class FileTreeItem extends vscode.TreeItem {
-  readonly fsPath: string;
+  readonly resourceKey: string;
 
   constructor(public readonly fileReview: FileReview) {
     const totalCount = fileReview.hunks.length;
-    const label = vscode.workspace.asRelativePath(fileReview.uri);
+    super(fileReview.relativePath, vscode.TreeItemCollapsibleState.Expanded);
 
-    super(label, vscode.TreeItemCollapsibleState.Expanded);
-
-    this.fsPath = fileReview.uri.fsPath;
+    this.resourceKey = fileReview.key;
+    this.id = `file:${fileReview.key}`;
     this.description = `${totalCount} hunk${totalCount !== 1 ? 's' : ''}`;
     this.iconPath = new vscode.ThemeIcon('file');
     this.contextValue = 'file';
     this.resourceUri = fileReview.uri;
-
     this.command = {
       command: 'cherryDiff.openDiff',
       title: 'Open Diff',
-      arguments: [fileReview.uri.fsPath],
+      arguments: [fileReview.key],
     };
   }
 }
 
 export class HunkTreeItem extends vscode.TreeItem {
-  readonly fsPath: string;
+  readonly resourceKey: string;
   readonly hunkId: string;
-  readonly startLine: number;
 
-  constructor(
-    fsPath: string,
-    public readonly hunkReview: HunkReview,
-    public readonly index: number
-  ) {
+  constructor(resourceKey: string, hunkReview: HunkReview, index: number) {
     const { startLine, endLine } = getChangedLineRange(hunkReview.hunk);
     const changedLine = getFirstChangedLine(hunkReview.hunk);
     const label = hunkReview.kind === 'file-created'
-      ? `Hunk ${index + 1}: empty file created`
+      ? `Hunk ${index + 1}: file created`
       : hunkReview.kind === 'file-deleted'
-        ? `Hunk ${index + 1}: empty file deleted`
-        : startLine + 1 === endLine
-          ? `Hunk ${index + 1}: line ${startLine + 1}`
-          : `Hunk ${index + 1}: lines ${startLine + 1}-${endLine}`;
+        ? `Hunk ${index + 1}: file deleted`
+        : hunkReview.kind === 'binary'
+          ? `Hunk ${index + 1}: binary or encoding change`
+          : hunkReview.kind === 'whole-file'
+            ? `Hunk ${index + 1}: large or complex file change`
+            : startLine + 1 === endLine
+            ? `Hunk ${index + 1}: line ${startLine + 1}`
+            : `Hunk ${index + 1}: lines ${startLine + 1}-${endLine}`;
 
     super(label, vscode.TreeItemCollapsibleState.None);
-
-    this.fsPath = fsPath;
+    this.resourceKey = resourceKey;
     this.hunkId = hunkReview.id;
-    this.startLine = changedLine;
+    this.id = `${resourceKey}:${hunkReview.id}`;
     this.iconPath = new vscode.ThemeIcon('circle-outline');
     this.contextValue = 'hunk';
-
-    // Clicking a hunk opens diff AND scrolls to the changed line
     this.command = {
       command: 'cherryDiff.openDiffAtLine',
       title: 'Open Diff at Hunk',
-      arguments: [fsPath, changedLine],
+      arguments: [resourceKey, changedLine],
     };
   }
 }
 
 export class ReviewTreeProvider implements vscode.TreeDataProvider<ReviewTreeItem>, vscode.Disposable {
-  private _onDidChangeTreeData = new vscode.EventEmitter<ReviewTreeItem | undefined | null>();
+  private readonly _onDidChangeTreeData = new vscode.EventEmitter<ReviewTreeItem | undefined>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
   private readonly reviewSubscription: vscode.Disposable;
 
-  constructor(private reviewManager: ReviewManager) {
-    this.reviewSubscription = reviewManager.onDidChangeReview(() => {
-      this._onDidChangeTreeData.fire(null);
+  constructor(private readonly reviews: ReviewManager) {
+    this.reviewSubscription = reviews.onDidChangeReview(() => {
+      this._onDidChangeTreeData.fire(undefined);
     });
   }
 
@@ -82,19 +76,20 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<ReviewTreeIte
 
   getChildren(element?: ReviewTreeItem): ReviewTreeItem[] {
     if (!element) {
-      const items: FileTreeItem[] = [];
-      for (const review of this.reviewManager.getAllFileReviews().values()) {
-        items.push(new FileTreeItem(review));
-      }
-      return items;
+      return [...this.reviews.getAllFileReviews().values()]
+        .sort((left, right) => left.relativePath.localeCompare(
+          right.relativePath,
+          undefined,
+          { sensitivity: 'base' }
+        ))
+        .map((review) => new FileTreeItem(review));
     }
 
     if (element instanceof FileTreeItem) {
       return element.fileReview.hunks.map(
-        (h, i) => new HunkTreeItem(element.fileReview.uri.fsPath, h, i)
+        (hunk, index) => new HunkTreeItem(element.fileReview.key, hunk, index)
       );
     }
-
     return [];
   }
 

@@ -1,51 +1,68 @@
 import * as vscode from 'vscode';
+import {
+  BASELINE_DOCUMENT_SCHEME,
+  CURRENT_DOCUMENT_SCHEME,
+  DIFF_SCROLL_DELAY_MS,
+} from './constants';
 import { ReviewManager } from './reviewManager';
+import type { FileReview } from './types';
 
-export type ReviewDocumentScheme = 'cherry-diff-baseline' | 'cherry-diff-current';
+type ReviewDocumentScheme =
+  | typeof BASELINE_DOCUMENT_SCHEME
+  | typeof CURRENT_DOCUMENT_SCHEME;
 
-/** Build a portable virtual-document URI while retaining the source path. */
 export function createReviewDocumentUri(
   scheme: ReviewDocumentScheme,
-  fsPath: string
+  sourceUri: vscode.Uri
 ): vscode.Uri {
-  const fileUri = vscode.Uri.file(fsPath);
   return vscode.Uri.from({
     scheme,
-    path: fileUri.path,
-    query: encodeURIComponent(fsPath),
+    path: sourceUri.path,
+    query: encodeURIComponent(sourceUri.toString()),
   });
 }
 
-/** Recover the exact platform path embedded by createReviewDocumentUri. */
-export function getReviewDocumentFsPath(uri: vscode.Uri): string {
-  if (uri.query) {
-    try {
-      return decodeURIComponent(uri.query);
-    } catch {
-      // Fall through for malformed or legacy URIs.
-    }
+export function getReviewResourceKey(uri: vscode.Uri): string | undefined {
+  if (!uri.query) {
+    return undefined;
   }
-  return vscode.Uri.file(uri.path).fsPath;
+  try {
+    return decodeURIComponent(uri.query);
+  } catch {
+    return undefined;
+  }
 }
 
-export class BaselineContentProvider implements vscode.TextDocumentContentProvider, vscode.Disposable {
-  private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
+/** Parameterized provider for baseline and deleted-current virtual documents. */
+export class ReviewContentProvider implements vscode.TextDocumentContentProvider, vscode.Disposable {
+  private readonly _onDidChange = new vscode.EventEmitter<vscode.Uri>();
   readonly onDidChange = this._onDidChange.event;
   private readonly reviewSubscription: vscode.Disposable;
+  private previousKeys = new Set<string>();
 
-  constructor(private reviewManager: ReviewManager) {
-    this.reviewSubscription = reviewManager.onDidChangeReview(() => {
-      for (const fsPath of reviewManager.getAllFileReviews().keys()) {
-        this._onDidChange.fire(
-          createReviewDocumentUri('cherry-diff-baseline', fsPath)
-        );
+  constructor(
+    private readonly reviews: ReviewManager,
+    private readonly scheme: ReviewDocumentScheme,
+    private readonly selectContent: (review: FileReview) => string | undefined
+  ) {
+    this.reviewSubscription = reviews.onDidChangeReview(() => {
+      const currentKeys = new Set(reviews.getAllFileReviews().keys());
+      const changedKeys = new Set([...this.previousKeys, ...currentKeys]);
+      this.previousKeys = currentKeys;
+      for (const key of changedKeys) {
+        const review = reviews.getFileReview(key);
+        const sourceUri = review?.uri ?? parseResourceKey(key);
+        if (sourceUri) {
+          this._onDidChange.fire(createReviewDocumentUri(this.scheme, sourceUri));
+        }
       }
     });
   }
 
   provideTextDocumentContent(uri: vscode.Uri): string {
-    const review = this.reviewManager.getFileReview(getReviewDocumentFsPath(uri));
-    return review?.baselineContent ?? '';
+    const key = getReviewResourceKey(uri);
+    const review = key ? this.reviews.getFileReview(key) : undefined;
+    return review ? this.selectContent(review) ?? '' : '';
   }
 
   dispose(): void {
@@ -54,74 +71,58 @@ export class BaselineContentProvider implements vscode.TextDocumentContentProvid
   }
 }
 
-/** Virtual document provider for the current content of deleted files. */
-export class CurrentContentProvider implements vscode.TextDocumentContentProvider, vscode.Disposable {
-  private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
-  readonly onDidChange = this._onDidChange.event;
-  private readonly reviewSubscription: vscode.Disposable;
-
-  constructor(private reviewManager: ReviewManager) {
-    this.reviewSubscription = reviewManager.onDidChangeReview(() => {
-      for (const fsPath of reviewManager.getAllFileReviews().keys()) {
-        this._onDidChange.fire(
-          createReviewDocumentUri('cherry-diff-current', fsPath)
-        );
-      }
-    });
-  }
-
-  provideTextDocumentContent(uri: vscode.Uri): string {
-    const review = this.reviewManager.getFileReview(getReviewDocumentFsPath(uri));
-    return review?.currentContent ?? '';
-  }
-
-  dispose(): void {
-    this.reviewSubscription.dispose();
-    this._onDidChange.dispose();
-  }
-}
-
-/**
- * Open a diff editor showing baseline (left) vs current (right).
- * Handles deleted files by using a virtual document on the right.
- */
-export async function openDiffForFile(
-  fsPath: string,
+export async function openDiffForReview(
+  review: FileReview,
   line?: number
 ): Promise<void> {
-  const baselineUri = createReviewDocumentUri('cherry-diff-baseline', fsPath);
-  const currentUri = vscode.Uri.file(fsPath);
-  const relativePath = vscode.workspace.asRelativePath(currentUri);
-
-  let fileExists = true;
-  try {
-    await vscode.workspace.fs.stat(currentUri);
-  } catch {
-    fileExists = false;
+  if (review.baseline.text === undefined || review.current.text === undefined) {
+    vscode.window.showInformationMessage(
+      `Cherry Diff: ${review.relativePath} is binary or not UTF-8. It can be accepted or rejected only as a whole.`
+    );
+    return;
+  }
+  if (review.hunks.some((hunk) => hunk.kind === 'whole-file')) {
+    vscode.window.showInformationMessage(
+      `Cherry Diff: ${review.relativePath} is too large or complex for a safe per-hunk diff. It can be accepted or rejected only as a whole.`
+    );
+    return;
   }
 
-  const rightUri = fileExists
-    ? currentUri
-    : createReviewDocumentUri('cherry-diff-current', fsPath);
+  const baselineUri = createReviewDocumentUri(BASELINE_DOCUMENT_SCHEME, review.uri);
+  const rightUri = review.current.exists
+    ? review.uri
+    : createReviewDocumentUri(CURRENT_DOCUMENT_SCHEME, review.uri);
 
   await vscode.commands.executeCommand(
     'vscode.diff',
     baselineUri,
     rightUri,
-    `${relativePath} (Baseline ↔ Current)`
+    `${review.relativePath} (Baseline ↔ Current)`
   );
 
-  if (line !== undefined) {
-    setTimeout(() => {
-      const editor = vscode.window.activeTextEditor;
-      if (editor) {
-        const pos = new vscode.Position(Math.max(0, line), 0);
-        editor.selection = new vscode.Selection(pos, pos);
-        editor.revealRange(
-          new vscode.Range(pos, pos),
-          vscode.TextEditorRevealType.InCenter
-        );
-      }
-    }, 200);
+  if (line === undefined) {
+    return;
+  }
+
+  setTimeout(() => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || (editor.document.uri.toString() !== rightUri.toString()
+      && editor.document.uri.toString() !== baselineUri.toString())) {
+      return;
+    }
+    const position = new vscode.Position(Math.max(0, line), 0);
+    editor.selection = new vscode.Selection(position, position);
+    editor.revealRange(
+      new vscode.Range(position, position),
+      vscode.TextEditorRevealType.InCenter
+    );
+  }, DIFF_SCROLL_DELAY_MS);
+}
+
+function parseResourceKey(key: string): vscode.Uri | undefined {
+  try {
+    return vscode.Uri.parse(key, true);
+  } catch {
+    return undefined;
   }
 }

@@ -15,6 +15,11 @@ const cases = [
   ['src/a.ts', 'src/?.ts', true],
   ['src/ab.ts', 'src/?.ts', false],
   ['src\\extension.ts', 'src/**', true],
+  ['src/app.ts', '{src,lib}/**', true],
+  ['lib/app.ts', '{src,lib}/**', true],
+  ['src/a.ts', 'src/[ab].ts', true],
+  ['src/c.ts', 'src/[ab].ts', false],
+  ['.github/workflows/test.yml', '**/*', true],
 ];
 
 for (const [filepath, pattern, expected] of cases) {

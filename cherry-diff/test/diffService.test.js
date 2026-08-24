@@ -13,6 +13,10 @@ test('computes and reconstructs independent content hunks', () => {
 
   assert.equal(hunks.length, 2);
   assert.ok(hunks.every((hunk) => hunk.kind === 'content'));
+  assert.deepEqual(
+    computeHunks('file.txt', baseline, current, true, true).map((hunk) => hunk.id),
+    hunks.map((hunk) => hunk.id)
+  );
 
   const firstOnly = reconstructFile('file.txt', baseline, [hunks[0].hunk]);
   assert.equal(firstOnly, `LINE 1\n${lines.slice(1).join('\n')}\n`);
@@ -31,6 +35,12 @@ test('represents deletion of an empty file as a reviewable hunk', () => {
 
   assert.equal(hunks.length, 1);
   assert.equal(hunks[0].kind, 'file-deleted');
+});
+
+test('aborts pathological diffs beyond the configured edit bound', () => {
+  const baseline = 'a\n'.repeat(501);
+  const current = 'b\n'.repeat(501);
+  assert.equal(computeHunks('large.txt', baseline, current, true, true), undefined);
 });
 
 test('does not create an existence hunk when state is unchanged', () => {

@@ -1,194 +1,165 @@
 import * as vscode from 'vscode';
 import { createHash } from 'crypto';
+import { BLOB_SHARD_PREFIX_LENGTH } from './constants';
+import {
+  FileSnapshot,
+  isFileNotFound,
+  missingFileSnapshot,
+  readFileSnapshot,
+  snapshotFromBytes,
+} from './fileSnapshot';
+import { isSameOrDescendant } from './resourceUri';
 
-export interface BaselineSnapshot {
-  content: string;
-  exists: boolean;
-}
-
-export type BaselineCaptureResult = 'captured' | 'missing' | 'unstable' | 'skipped';
+type BaselineCaptureResult = 'captured' | 'missing' | 'unstable' | 'skipped';
 
 interface BaselineEntry {
+  uri: vscode.Uri;
   exists: boolean;
-  blobHash?: string;
-  size: number;
-  modifiedTime: number;
+  blobKey?: string;
 }
 
 /**
- * Stores baseline contents in extension storage and keeps only a lightweight
- * path-to-blob index in extension-host memory. Blob contents are loaded only
- * when a changed file needs to be reviewed.
+ * Stores one path-addressed byte snapshot per tracked resource. Only the URI
+ * index stays in extension-host memory; bytes are loaded for active reviews.
  */
 export class BaselineService implements vscode.Disposable {
   private readonly baselines = new Map<string, BaselineEntry>();
-  private readonly knownBlobs = new Set<string>();
-  private readonly blobRefCounts = new Map<string, number>();
   private readonly blobsUri: vscode.Uri;
+  private readonly preparedBlobDirectories = new Set<string>();
   private initialized = false;
+  private complete = false;
 
   constructor(private readonly storageUri: vscode.Uri) {
     this.blobsUri = vscode.Uri.joinPath(storageUri, 'blobs');
   }
 
-  /** Remove the previous session and prepare an empty baseline store. */
   async clearBaselines(): Promise<void> {
     this.baselines.clear();
-    this.knownBlobs.clear();
-    this.blobRefCounts.clear();
+    this.preparedBlobDirectories.clear();
+    this.complete = false;
 
     try {
       await vscode.workspace.fs.delete(this.storageUri, { recursive: true });
-    } catch {
-      // The store does not exist on the first run.
+    } catch (error) {
+      if (!isFileNotFound(error)) {
+        throw error;
+      }
     }
 
     await vscode.workspace.fs.createDirectory(this.blobsUri);
     this.initialized = true;
   }
 
-  /** Capture a file directly as bytes without opening a VS Code document. */
   async captureBaseline(uri: vscode.Uri): Promise<BaselineCaptureResult> {
     await this.ensureInitialized();
+    const result = await readFileSnapshot(uri);
 
-    let statBefore: vscode.FileStat;
-    try {
-      statBefore = await vscode.workspace.fs.stat(uri);
-    } catch {
-      await this.captureMissingBaseline(uri.fsPath);
-      return 'missing';
+    if (result.kind === 'unstable') {
+      return 'unstable';
     }
-    if ((statBefore.type & vscode.FileType.Directory) !== 0) {
+    if (result.kind === 'directory') {
       return 'skipped';
     }
 
-    let bytes: Uint8Array;
-    let statAfter: vscode.FileStat;
-    const openDocument = vscode.workspace.textDocuments.find(
-      (document) => document.uri.scheme === 'file' && document.uri.fsPath === uri.fsPath
-    );
-    const documentVersion = openDocument?.version;
-
-    try {
-      // Preserve unsaved editor state without opening every workspace file.
-      bytes = openDocument
-        ? new TextEncoder().encode(openDocument.getText())
-        : await vscode.workspace.fs.readFile(uri);
-      statAfter = await vscode.workspace.fs.stat(uri);
-    } catch (error) {
-      try {
-        await vscode.workspace.fs.stat(uri);
-      } catch {
-        await this.captureMissingBaseline(uri.fsPath);
-        return 'missing';
-      }
-      throw error;
-    }
-
-    // If a write overlapped the read, request another capture rather than
-    // keeping a potentially torn copy.
-    if (documentVersion !== undefined && openDocument?.version !== documentVersion) {
-      return 'unstable';
-    }
-    if (!openDocument
-      && (statBefore.mtime !== statAfter.mtime || statBefore.size !== statAfter.size)) {
-      return 'unstable';
-    }
-
-    const blobHash = await this.storeBlob(bytes);
-    await this.setBaselineEntry(uri.fsPath, {
-      exists: true,
-      blobHash,
-      size: bytes.byteLength,
-      modifiedTime: statAfter.mtime,
-    });
-    return 'captured';
+    await this.updateBaseline(uri, result.snapshot);
+    return result.snapshot.exists ? 'captured' : 'missing';
   }
 
-  /** Record that a path did not exist at the baseline boundary. */
-  private async captureMissingBaseline(fsPath: string): Promise<void> {
-    await this.ensureInitialized();
-    await this.setBaselineEntry(fsPath, {
-      exists: false,
-      size: 0,
-      modifiedTime: 0,
-    });
-  }
-
-  /** Load baseline text only for a file that has entered review. */
-  async getSnapshot(fsPath: string): Promise<BaselineSnapshot | undefined> {
-    const entry = this.baselines.get(fsPath);
+  async getSnapshot(uriOrKey: vscode.Uri | string): Promise<FileSnapshot | undefined> {
+    const key = typeof uriOrKey === 'string' ? uriOrKey : uriOrKey.toString();
+    const entry = this.baselines.get(key);
     if (!entry) {
       return undefined;
     }
     if (!entry.exists) {
-      return { content: '', exists: false };
+      return missingFileSnapshot();
     }
-    if (!entry.blobHash) {
-      throw new Error(`Baseline blob is missing for ${fsPath}`);
+    if (!entry.blobKey) {
+      throw new Error(`Baseline blob is missing for ${entry.uri.toString()}`);
     }
 
-    const bytes = await vscode.workspace.fs.readFile(this.getBlobUri(entry.blobHash));
-    return {
-      content: new TextDecoder().decode(bytes),
-      exists: true,
-    };
+    const bytes = await vscode.workspace.fs.readFile(this.getBlobUri(entry.blobKey));
+    return snapshotFromBytes(bytes);
   }
 
-  /** Store an accepted state as the new baseline for one file. */
-  async updateBaseline(
-    fsPath: string,
-    content: string,
-    exists = true
-  ): Promise<void> {
+  async updateBaseline(uri: vscode.Uri, snapshot: FileSnapshot): Promise<void> {
     await this.ensureInitialized();
+    const key = uri.toString();
 
-    if (!exists) {
-      await this.setBaselineEntry(fsPath, {
-        exists: false,
-        size: 0,
-        modifiedTime: 0,
-      });
+    if (!snapshot.exists) {
+      this.baselines.set(key, { uri, exists: false });
       return;
     }
 
-    const bytes = new TextEncoder().encode(content);
-    const blobHash = await this.storeBlob(bytes);
-    await this.setBaselineEntry(fsPath, {
-      exists: true,
-      blobHash,
-      size: bytes.byteLength,
-      modifiedTime: Date.now(),
-    });
+    const blobKey = this.getBlobKey(key);
+    await this.prepareBlobDirectory(blobKey);
+    await vscode.workspace.fs.writeFile(this.getBlobUri(blobKey), snapshot.bytes);
+    this.baselines.set(key, { uri, exists: true, blobKey });
   }
 
-  hasBaseline(fsPath: string): boolean {
-    return this.baselines.has(fsPath);
+  hasBaseline(uriOrKey: vscode.Uri | string): boolean {
+    const key = typeof uriOrKey === 'string' ? uriOrKey : uriOrKey.toString();
+    return this.baselines.has(key);
   }
 
-  getBaselinePaths(): string[] {
-    return [...this.baselines.keys()];
+  getBaselineUris(): vscode.Uri[] {
+    return [...this.baselines.values()].map((entry) => entry.uri);
+  }
+
+  getBaselineUrisUnder(uri: vscode.Uri): vscode.Uri[] {
+    return [...this.baselines.values()]
+      .map((entry) => entry.uri)
+      .filter((candidate) => isSameOrDescendant(candidate, uri));
   }
 
   getBaselineCount(): number {
     return this.baselines.size;
   }
 
-  /** Remove one file or a directory subtree from the tracked baseline set. */
-  async removeBaseline(fsPath: string, recursive: boolean): Promise<void> {
-    const separator = fsPath.includes('\\') ? '\\' : '/';
-    const prefix = fsPath.endsWith(separator) ? fsPath : `${fsPath}${separator}`;
-    const paths = [...this.baselines.keys()].filter(
-      (candidate) => candidate === fsPath || (recursive && candidate.startsWith(prefix))
-    );
+  /** Remove one resource in O(1), or scan once for a directory subtree. */
+  removeBaseline(uriOrKey: vscode.Uri | string, recursive: boolean): void {
+    const key = typeof uriOrKey === 'string' ? uriOrKey : uriOrKey.toString();
+    if (!recursive) {
+      this.baselines.delete(key);
+      return;
+    }
 
-    for (const candidate of paths) {
-      const blobHash = this.baselines.get(candidate)?.blobHash;
-      this.baselines.delete(candidate);
-      if (blobHash) {
-        await this.releaseBlob(blobHash);
+    const uri = typeof uriOrKey === 'string'
+      ? this.baselines.get(key)?.uri ?? vscode.Uri.parse(uriOrKey)
+      : uriOrKey;
+    for (const [candidateKey, entry] of this.baselines) {
+      if (isSameOrDescendant(entry.uri, uri)) {
+        this.baselines.delete(candidateKey);
       }
     }
+  }
+
+  markComplete(): void {
+    this.complete = true;
+  }
+
+  isComplete(): boolean {
+    return this.complete;
+  }
+
+  async deleteSessionStore(): Promise<void> {
+    this.baselines.clear();
+    this.preparedBlobDirectories.clear();
+    this.complete = false;
+    this.initialized = false;
+    try {
+      await vscode.workspace.fs.delete(this.storageUri, { recursive: true });
+    } catch (error) {
+      if (!isFileNotFound(error)) {
+        throw error;
+      }
+    }
+  }
+
+  dispose(): void {
+    this.baselines.clear();
+    this.preparedBlobDirectories.clear();
+    this.complete = false;
   }
 
   private async ensureInitialized(): Promise<void> {
@@ -198,67 +169,24 @@ export class BaselineService implements vscode.Disposable {
     }
   }
 
-  private async storeBlob(bytes: Uint8Array): Promise<string> {
-    const hash = createHash('sha256').update(bytes).digest('hex');
-    if (this.knownBlobs.has(hash)) {
-      return hash;
-    }
-
-    const blobDirectory = vscode.Uri.joinPath(this.blobsUri, hash.slice(0, 2));
-    await vscode.workspace.fs.createDirectory(blobDirectory);
-    const blobUri = this.getBlobUri(hash);
-    try {
-      await vscode.workspace.fs.stat(blobUri);
-    } catch {
-      await vscode.workspace.fs.writeFile(blobUri, bytes);
-    }
-    this.knownBlobs.add(hash);
-    return hash;
+  private getBlobKey(resourceKey: string): string {
+    return createHash('sha256').update(resourceKey).digest('hex');
   }
 
-  private getBlobUri(hash: string): vscode.Uri {
-    return vscode.Uri.joinPath(this.blobsUri, hash.slice(0, 2), hash);
-  }
-
-  private async setBaselineEntry(fsPath: string, entry: BaselineEntry): Promise<void> {
-    const previousHash = this.baselines.get(fsPath)?.blobHash;
-    const nextHash = entry.blobHash;
-    this.baselines.set(fsPath, entry);
-
-    if (previousHash === nextHash) {
+  private async prepareBlobDirectory(blobKey: string): Promise<void> {
+    const prefix = blobKey.slice(0, BLOB_SHARD_PREFIX_LENGTH);
+    if (this.preparedBlobDirectories.has(prefix)) {
       return;
     }
-    if (nextHash) {
-      this.blobRefCounts.set(nextHash, (this.blobRefCounts.get(nextHash) ?? 0) + 1);
-    }
-    if (!previousHash) {
-      return;
-    }
-
-    await this.releaseBlob(previousHash);
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(this.blobsUri, prefix));
+    this.preparedBlobDirectories.add(prefix);
   }
 
-  private async releaseBlob(hash: string): Promise<void> {
-    const remainingReferences = (this.blobRefCounts.get(hash) ?? 1) - 1;
-    if (remainingReferences > 0) {
-      this.blobRefCounts.set(hash, remainingReferences);
-      return;
-    }
-
-    this.blobRefCounts.delete(hash);
-    this.knownBlobs.delete(hash);
-    try {
-      await vscode.workspace.fs.delete(this.getBlobUri(hash));
-    } catch {
-      // The next session reset removes any orphaned blob.
-    }
-  }
-
-  dispose(): void {
-    // The next activation clears the session store. Avoid asynchronous file
-    // operations during extension-host shutdown.
-    this.baselines.clear();
-    this.knownBlobs.clear();
-    this.blobRefCounts.clear();
+  private getBlobUri(blobKey: string): vscode.Uri {
+    return vscode.Uri.joinPath(
+      this.blobsUri,
+      blobKey.slice(0, BLOB_SHARD_PREFIX_LENGTH),
+      blobKey
+    );
   }
 }

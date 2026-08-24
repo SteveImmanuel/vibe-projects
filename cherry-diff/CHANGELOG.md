@@ -1,5 +1,37 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Serialized tracking controller with session cancellation and bounded capture retries
+- Revisioned dirty-resource tracking for race-safe incremental reviews
+- Exact byte snapshots and whole-file review for binary, unsupported, large, or overly complex files
+- Workspace-root-scoped visual file selections stored outside workspace settings
+- Multi-root and non-file URI identity throughout baseline and review state
+
+### Changed
+- Baselines are path-addressed snapshots without content hashing, deduplication, or reference counting
+- Baseline blobs are sharded into two-character prefix directories
+- Review refreshes recompute only resources with new events
+- Glob patterns use one cached `minimatch` implementation with brace and character-class support
+- Tracking activates lazily when a Cherry Diff view or command is used
+- Directory capture uses deduplicated linear traversal and never follows symbolic-link directories
+- Shared operational constants live in `src/constants.ts`
+- Updated `diff` and development dependencies; dependency audit is clean
+
+### Fixed
+- Prevented uncaptured resources from being treated as new files before baseline completion
+- Removed silent 50,000-file discovery limits and unintended `files.exclude` fallback behavior
+- Prevented stale hunk rejection from overwriting newer file edits
+- Kept reviews pending when edits or deletions fail
+- Preserved binary bytes and UTF-8 BOM state during whole-file restoration
+- Serialized filter synchronization, review refresh, resolution, and Stop Tracking cleanup
+- Expanded directory create/delete events to their affected files
+- Made exact baseline removal constant-time
+- Prevented Tracked Files selections from modifying and then reviewing `.vscode/settings.json`
+- Closed resolved diff tabs by URI identity and guarded delayed hunk scrolling against editor switches
+- Kept Controls panel buttons functional under its content security policy
+
 ## [0.5.3]
 
 ### Changed

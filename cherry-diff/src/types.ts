@@ -1,22 +1,26 @@
 import type * as vscode from 'vscode';
-import type { Hunk } from 'diff';
+import type { StructuredPatchHunk } from 'diff';
+import type { FileSnapshot } from './fileSnapshot';
 
-export type HunkStatus = 'pending' | 'accepted' | 'rejected';
-export type HunkKind = 'content' | 'file-created' | 'file-deleted';
+export type Resolution = 'accepted' | 'rejected';
+export type HunkKind =
+  | 'content'
+  | 'file-created'
+  | 'file-deleted'
+  | 'binary'
+  | 'whole-file';
 
 export interface HunkReview {
   id: string;
-  hunk: Hunk;
-  status: HunkStatus;
+  hunk: StructuredPatchHunk;
   kind: HunkKind;
 }
 
 export interface FileReview {
+  key: string;
   uri: vscode.Uri;
   relativePath: string;
-  baselineContent: string;
-  baselineExists: boolean;
-  currentContent: string;
-  currentExists: boolean;
+  baseline: FileSnapshot;
+  current: FileSnapshot;
   hunks: HunkReview[];
 }

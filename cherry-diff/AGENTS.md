@@ -1,315 +1,255 @@
-# Cherry Diff — Agent Handover Document
+# Cherry Diff — Agent Handover
 
-## What is this project?
+## Purpose
 
-**Cherry Diff** is a VS Code extension that provides **per-hunk accept/reject** for file edits — the same UX that exists in Cursor and GitHub Copilot's Agent mode, but as a standalone, agent-agnostic extension that works with any AI coding tool (Claude Code, Cline, Roo Code, Aider, etc.) or even manual edits.
+Cherry Diff is a VS Code extension for reviewing file edits one hunk at a time. It is deliberately agent-agnostic: it watches workspace file changes and never requires an AI tool to integrate with, call, or know about the extension.
 
-The core idea: instead of accepting or rejecting an entire file's changes at once, the user can review each discrete "hunk" (section of change) individually, accepting some and rejecting others.
+Core principles:
 
-**Key design principles:**
-- **Agent-agnostic** — doesn't hook into any specific AI agent; watches file changes at the workspace level
-- **No Git dependency** — works with any project, Git or not. Uses extension-owned disk snapshots, not VCS history
-- **Marketplace-publishable** — uses only stable, public VS Code APIs (no proposed APIs)
-- **Non-invasive** — no inline editor UI (no CodeLens, no decorations). All review happens in a dedicated sidebar panel + VS Code's native diff editor
+- **Agent-agnostic** — observes normal editor and filesystem events
+- **No Git dependency** — rejection uses extension-owned baseline snapshots
+- **Explicit activation** — tracking starts only after the user presses Start Tracking
+- **No background focus changes** — reviews update the sidebar but never auto-open an editor
+- **Byte-safe restoration** — binary and unsupported text files are restored from exact bytes
 
-## Current state (v0.5.3)
+## Current development state
 
-Working MVP. Core features implemented:
-- Tracking is opt-in and begins only after the user explicitly presses Start Tracking
-- Tracks file changes (create, modify, delete) with configurable include/exclude glob filters
-- Computes per-hunk diffs using the `diff` npm package
-- **Controls panel** (WebviewView) with Stop Tracking and bulk Accept/Reject buttons; manual Refresh lives in the Review view title
-- **Review panel** (TreeView) shows files and their hunks with inline Accept/Reject buttons
-- **Tracked Files panel** provides an Explorer-style workspace tree with include/exclude checkboxes
-- Clicking a hunk opens VS Code's native diff editor (baseline vs current) scrolled to the relevant line
-- Accept advances the baseline; Reject rewrites the file without that hunk
-- Auto-save after accept/reject (configurable via `cherryDiff.autoSave`)
-- Handles edge cases: new files (reject deletes), deleted files (reject recreates), empty files
-- Badge on the activity bar icon shows number of changed files
-- Auto-refreshes sidebar when files change (800ms debounce)
-- Hunk labels show only actual changed lines, not context (e.g. "line 42" for single-line, "lines 42-50" for multi-line)
-- Diff tabs auto-close when a file's review is complete without auto-opening another file or stealing editor focus
-- Baseline contents are stored as content-addressed blobs in extension storage and loaded into memory only for changed files
-- File watchers run during baseline initialization; files changed during capture are recaptured before tracking becomes active
+The latest committed version is `0.5.3`. The working implementation after that version includes a broad safety and architecture cleanup that is not yet versioned or committed.
+
+Implemented behavior:
+
+- Explicit Start/Stop Tracking controls
+- Disk-backed, path-addressed baseline snapshots
+- Configurable bounded baseline capture concurrency
+- Revisioned filesystem change tracking
+- Incremental review refresh for dirty resources only
+- Per-hunk accept/reject for UTF-8 text
+- Whole-file accept/reject for binary, unsupported, very large, or overly complex diffs
+- Explorer-style Tracked Files tree with recursive checkboxes
+- Workspace-root-scoped visual selections for multi-root workspaces
+- Native VS Code diff editors for safe text reviews
+- Automatic review refresh with an 800 ms debounce
+- Cancellation and bounded retries during baseline preparation
 
 ## Project structure
 
-```
-cherry-diff/
-├── package.json              — VS Code extension manifest (commands, menus, views, config)
-├── tsconfig.json             — TypeScript config (target ES2022, commonjs modules)
-├── LICENSE                   — MIT license
-├── .gitignore
-├── .vscodeignore             — Excludes src/, .vscode/, tsconfig from VSIX package
-├── assets/
-│   ├── icon.png              — Extension icon (PNG for Marketplace)
-│   └── icon.svg              — Extension icon (SVG source)
-├── .vscode/
-│   ├── launch.json           — F5 launches Extension Development Host
-│   └── tasks.json            — npm watch as build task
-├── src/
-│   ├── types.ts              — Shared type definitions
-│   ├── extension.ts          — Entry point: activation, command registration, wiring
-│   ├── baselineService.ts    — Disk-backed, content-addressed baseline storage
-│   ├── changeTracker.ts      — Workspace file change watcher with path filtering
-│   ├── filterService.ts      — Glob evaluation and nearest-path checkbox overrides
-│   ├── filterTreeProvider.ts — Explorer-style include/exclude checkbox tree
-│   ├── diffService.ts        — Diff computation and hunk manipulation (wraps `diff` npm)
-│   ├── reviewManager.ts      — Orchestrates review: diff computation, accept/reject logic
-│   ├── controlsViewProvider.ts — WebviewView for Controls panel (buttons + status)
-│   ├── reviewTreeProvider.ts — TreeView for Review panel (files → hunks hierarchy)
-│   └── baselineContentProvider.ts — Virtual document providers for diff editor
-├── out/                      — Compiled JS (generated, gitignored)
-└── node_modules/             — Dependencies (gitignored)
-```
+```text
+src/
+├── extension.ts                Activation, views, commands, context keys
+├── constants.ts                Shared operational constants
+├── trackingController.ts       Serialized tracking-session lifecycle
+├── baselineCaptureService.ts   Discovery, traversal, capture workers, retries
+├── baselineService.ts          Disk-backed snapshot index and blob storage
+├── fileSnapshot.ts             Stable byte reads and UTF-8/BOM classification
+├── changeTracker.ts            Revisioned editor/filesystem events
+├── filterService.ts            Cached glob matching and workspace-scoped overrides
+├── filterTreeProvider.ts       Tracked Files checkbox tree
+├── reviewManager.ts            Incremental review and accept/reject operations
+├── diffService.ts              Structured diff and patch helpers
+├── reviewTreeProvider.ts       Review TreeView items
+├── baselineContentProvider.ts  Virtual diff documents and diff opening
+├── controlsViewProvider.ts     Controls WebviewView
+├── glob.ts                     Shared minimatch wrapper
+└── types.ts                    Review domain types
 
-## Architecture and data flow
-
-### Startup sequence
-
-1. `activate()` in `extension.ts` runs on `onStartupFinished`
-2. `BaselineService` is created with a session directory under `ExtensionContext.storageUri`, and stale session data is cleared
-3. Virtual document providers, the Controls WebviewView, Review TreeView, and Tracked Files TreeView are registered
-4. Commands and event listeners are wired up, but no file watchers or baselines are started automatically
-5. The user clicks **Start Tracking**, which calls `ChangeTracker.beginInitialization()` before capture starts
-6. `captureFilteredBaselines()` snapshots included files as SHA-256-addressed blobs using the configured concurrency (default 12)
-7. Changes observed during capture are drained and recaptured; `finishInitialization()` then switches the existing watchers to normal tracking
-
-### Change detection flow
-
-```
-File edit → ChangeTracker.shouldTrack(uri) → glob filter check
-  → if passes: add to changedFiles set, fire onDidChangeTrackedFiles
-    → debounced (800ms): ReviewManager.startReview()
-      → for each changed file: load its baseline blob, get current content, compute diff
-      → populate fileReviews map with hunks
-      → fire onDidChangeReview → TreeView updates, badge updates, Controls panel updates
+test/
+├── baselineCaptureService.test.js
+├── baselineService.test.js
+├── changeTracker.test.js
+├── diffService.test.js
+├── filterService.test.js
+├── glob.test.js
+└── reviewManager.test.js
 ```
 
-### Accept flow
+## Core invariants
 
+### Tracking session
+
+1. Extension activation does not capture files or install tracking watchers.
+2. Start Tracking installs watchers before baseline discovery begins.
+3. Changes observed during capture are drained and recaptured before tracking becomes active.
+4. Capture has bounded retries; an incomplete or unstable baseline set never becomes active.
+5. Stop Tracking invalidates the session immediately, waits behind any active serialized operation, clears reviews, and deletes that session's snapshot store.
+6. Each extension host uses a unique baseline-session directory so concurrent windows do not clear one another's data.
+
+### Baseline identity and safety
+
+- Resources are keyed by full URI strings, not `fsPath`.
+- Existing files are captured as exact bytes.
+- A missing baseline entry is interpreted as a newly created file only after the initial baseline set is marked complete.
+- No `findFiles()` result cap is used; silent truncation is forbidden.
+- Empty Cherry Diff excludes pass `null` to `findFiles()` so VS Code's unrelated `files.exclude` setting is not applied implicitly.
+- Snapshot writes are path-addressed by a SHA-256 hash of the resource URI. Content deduplication and reference counting are intentionally not used.
+
+### Text and binary handling
+
+`fileSnapshot.ts` classifies bytes as:
+
+- UTF-8
+- UTF-8 with BOM
+- Binary or unsupported encoding
+
+Open UTF-8 documents are captured from their in-memory text so unsaved edits are preserved. Baseline bytes retain BOM information.
+
+Binary and unsupported files receive one whole-file review hunk. They are never decoded and rewritten as UTF-8. Large text files and diffs that exceed the configured edit bound also fall back to a whole-file review.
+
+### Review consistency
+
+- `ChangeTracker` gives every event a monotonically increasing revision.
+- `ReviewManager.refreshDirty()` processes only dirty resources.
+- A review acknowledges an event only if its revision is still current after asynchronous reads.
+- Unrelated existing reviews retain their hunk IDs and tree state.
+- Before accepting or rejecting, the current file is reread and compared with the reviewed snapshot.
+- If the file changed after review preparation, the operation is refused and the review is refreshed.
+- Failed edits or deletions leave the review pending.
+
+### Operation serialization
+
+`TrackingController` owns one promise queue for all state-changing work:
+
+- Initialization
+- Filter synchronization
+- Review refresh
+- Accept/reject operations
+- Stop and cleanup
+
+Session generations provide cancellation. Timers only enqueue work and always handle failures.
+
+## Filtering model
+
+Filter precedence is:
+
+1. Nearest visual file/directory override
+2. `cherryDiff.excludePaths`
+3. `cherryDiff.includePaths`
+
+Glob patterns are compiled once with `minimatch`; brace expansion, character classes, `**`, `*`, and `?` share one matcher implementation.
+
+Visual selections are stored in `ExtensionContext.workspaceState`, not `.vscode/settings.json`. This prevents checkbox use from modifying the repository or creating a Cherry Diff review for its own setting change.
+
+Override keys include the workspace-root URI, so equal relative paths in separate workspace roots remain independent. Directory selections remove redundant descendant overrides. Symbolic-link directories are shown but never recursively traversed.
+
+Changing include/exclude settings while tracking performs serialized incremental baseline synchronization. Changing filters during initial preparation cancels the incomplete session and requires tracking to be started again.
+
+## Main flows
+
+### Startup
+
+```text
+Open Cherry Diff view or invoke command
+  → activate extension lazily
+  → register views, commands, providers
+  → set tracking contexts false
+  → wait for explicit Start Tracking
 ```
-User clicks ✓ on hunk in sidebar
-  → ReviewManager.acceptHunk(fsPath, hunkId)
-    → Apply just this hunk to the baseline → new baseline includes this change
-    → Re-diff current content against updated baseline
-    → Remaining hunks (if any) get new IDs and positions
-    → File on disk is NOT modified (change is already there)
-    → Auto-save if enabled (cherryDiff.autoSave setting)
-    → If all hunks resolved: remove file from changed files set
+
+### Start Tracking
+
+```text
+Start Tracking
+  → begin initialization and install watchers
+  → clear this session's snapshot directory
+  → discover every included file without a result cap
+  → capture stable byte snapshots with bounded workers
+  → drain changes observed during capture
+  → mark baseline set complete
+  → switch existing watchers to normal tracking
 ```
 
-### Reject flow
+### Change review
 
-```
-User clicks ✗ on hunk in sidebar
-  → ReviewManager.rejectHunk(fsPath, hunkId)
-    → Build keepHunks = all hunks except the rejected one
-    → reconstructFile(baseline, keepHunks) → new file content
-    → Write new content to disk (via writeFileContent helper)
-    → Re-diff to get updated positions for remaining hunks
-    → Auto-save if enabled
-    → If all hunks resolved: remove file from changed files set
-```
-
-### Reject/accept edge cases
-
-| Scenario | Accept | Reject |
-|---|---|---|
-| **Modified file** | Advances baseline, file unchanged | Rewrites file without the hunk |
-| **New file** (no baseline) | Confirms new file, sets baseline | Deletes the file |
-| **Deleted file** (no current) | Confirms deletion | Recreates file from baseline |
-
-### Diff view
-
-When the user clicks a file or hunk in the sidebar, the extension opens VS Code's native diff editor:
-- **Left pane**: baseline content, served by `BaselineContentProvider` via `cherry-diff-baseline:` URI scheme
-- **Right pane**: current file on disk (or `CurrentContentProvider` via `cherry-diff-current:` for deleted files)
-- For hunk clicks, the editor scrolls to the hunk's first changed line (200ms delay to let the diff editor render)
-
-## Key types
-
-### `HunkReview` (types.ts)
-```typescript
-interface HunkReview {
-  id: string;           // Unique ID like "hunk_42", generated sequentially
-  hunk: Hunk;           // From `diff` npm package — contains lines, oldStart, newStart, etc.
-  status: HunkStatus;   // 'pending' | 'accepted' | 'rejected'
-}
+```text
+Editor/filesystem event
+  → FilterService inclusion check
+  → record URI + kind + revision
+  → debounce
+  → serialized directory-event expansion
+  → ReviewManager.refreshDirty()
+  → load one baseline and current snapshot
+  → commit only if revision is still current
+  → update Review tree, badge, context keys, Controls
 ```
 
-### `FileReview` (types.ts)
-```typescript
-interface FileReview {
-  uri: vscode.Uri;
-  relativePath: string;
-  baselineContent: string;   // Loaded only after the file enters review
-  baselineExists: boolean;   // Distinguishes an empty file from a missing file
-  currentContent: string;    // What the file looks like now on disk
-  currentExists: boolean;    // Distinguishes an empty file from a missing file
-  hunks: HunkReview[];       // Parsed diff hunks between baseline and current
-}
-```
+### Accept
 
-## Module details
+- Text hunk: apply only that hunk to the baseline text and persist the new baseline bytes.
+- Whole file: set the baseline to the current exact snapshot.
+- The current workspace file is not rewritten.
 
-### `baselineService.ts`
-Stores baseline bytes as SHA-256-addressed blobs under `ExtensionContext.storageUri/baseline-session/blobs`. Memory holds only a path index containing existence, blob hash, size, and modification time. `captureBaseline()` reads through `workspace.fs` without opening every file as a VS Code document, while already-open documents are captured from their current text so unsaved state is preserved. `getSnapshot()` loads and decodes one blob only when its file enters review. The store is session-scoped and cleared when tracking is reset, disabled, or started in a new extension-host session.
+### Reject
 
-### `changeTracker.ts`
-Watches for file changes using:
-- `vscode.workspace.onDidChangeTextDocument` — for in-editor edits
-- `vscode.workspace.createFileSystemWatcher('**/*')` — for external writes (agent CLI tools), file creation, and deletion (`onDidDelete`)
+- Reread and verify the current file first.
+- Text hunk: reconstruct the file from the baseline plus all other pending hunks.
+- Whole file: restore exact baseline bytes or baseline nonexistence.
+- Check `WorkspaceEdit.applyEdit()` results and retain the review on failure.
 
-Each change goes through `shouldTrack(uri)`, which first applies the nearest ancestor or exact entry from `cherryDiff.pathOverrides`. If there is no explicit selection, it checks `cherryDiff.excludePaths` first and then `cherryDiff.includePaths`.
+## Diff documents
 
-**Glob matching** is implemented manually with a character-by-character parser that converts glob patterns to regex. Supports `**` (any path segments), `*` (anything except `/`), `?` (single non-`/` char). Automated tests cover root, nested, excluded, wildcard, and Windows-style paths.
+`ReviewContentProvider` is parameterized for baseline and deleted-current content. Virtual URI queries retain the complete source URI string.
 
-During startup or baseline reset, changes go into a separate initialization set. The capture pipeline drains this set before atomically switching the already-installed watchers to normal tracking. Also provides `removeChangedFile(fsPath)` to clean up files that no longer have pending hunks after accept/reject.
+Diff tabs are closed by matching `TabInputTextDiff.original` URIs rather than display labels. Hunk scrolling still uses a short render delay, but the callback verifies that the active editor belongs to the requested diff before moving selection.
 
-### `filterService.ts` and `filterTreeProvider.ts`
-`FilterTreeProvider` lazily reads workspace directories and renders an Explorer-style tree in the `cherryDiffFilters` view. Checked entries are included and unchecked entries are excluded. Directory selections apply recursively by storing a path override and removing redundant descendant overrides. `filterService.ts` resolves the nearest override before falling back to include/exclude globs. Newly included paths are captured into the existing baseline store without resetting unrelated reviews; excluded paths are removed from baseline storage and the review is recomputed.
+Binary and whole-file fallback reviews do not open a potentially expensive or lossy text diff.
 
-### `diffService.ts`
-Wraps the `diff` npm package. Key functions:
+## Configuration
 
-- `computeHunks(relativePath, baseline, current)` → `HunkReview[]` — uses `structuredPatch()` to get hunks
-- `reconstructFile(relativePath, baseline, hunks)` → `string | false` — uses `formatPatch()` + `applyPatch()` to rebuild a file from baseline + selected hunks
-- `getFirstChangedLine(hunk)` → `number` — first `+` or `-` line (used for scroll-to-hunk)
-- `getChangedLineRange(hunk)` → `{ startLine, endLine }` — range of only actual changed lines, excluding context (used for hunk labels in TreeView)
+| Setting | Type | Default | Purpose |
+|---|---|---:|---|
+| `cherryDiff.autoSave` | boolean | `true` | Save dirty text documents after resolution |
+| `cherryDiff.baselineCaptureConcurrency` | integer | `12` | Concurrent captures, clamped to 1–64 |
+| `cherryDiff.includePaths` | string[] | `["**/*"]` | Default included paths |
+| `cherryDiff.excludePaths` | string[] | 27 defaults | Default excluded paths |
 
-**Important**: hunk IDs are generated with a global counter (`hunk_0`, `hunk_1`, ...) that never resets. After accept/reject, hunks are recomputed and get new IDs. This means hunk IDs are ephemeral — never persist them.
+Visual path selections are internal workspace state, not a public configuration setting.
 
-### `reviewManager.ts`
-Central orchestrator. Key behaviors:
+## Commands and views
 
-- **`startReview()`**: Clears existing reviews, iterates all changed files, lazily loads each changed file's baseline blob, and computes diffs. Explicit existence flags distinguish missing files from empty files.
-- **`acceptHunk()`**: Applies the accepted hunk to the baseline (advancing it forward), then re-diffs current vs new baseline. The file on disk is NOT modified. Auto-saves if enabled.
-- **`rejectHunk()`**: Reconstructs the file without the rejected hunk and writes it to disk. Then re-diffs. Auto-saves if enabled.
-- **`setAllHunksInFile()`**: Accept all = advance baseline to current content. Reject all = rewrite file to baseline. Auto-saves if enabled.
-- **`writeFileContent(uri, content, shouldExist)`**: Private helper that keeps file existence separate from content, deletes rejected new files, recreates rejected deletions, and preserves legitimate empty files.
-- **`autoSave()`**: Private helper that saves the file if `cherryDiff.autoSave` is true and the document is dirty.
-- **`applying` flag**: Set to `true` during file writes to prevent the auto-refresh debounce from triggering a re-review mid-write (which would cause infinite loops).
+Views:
 
-### `controlsViewProvider.ts`
-WebviewView that renders the **Controls** section at the top of the Cherry Diff sidebar. Uses HTML/CSS with VS Code theme variables for native look. Shows:
-- **Status line**: "Tracking active · N files changed · M hunks pending"
-- **Row 1**: Stop Tracking (full width, dark red) — or Start Tracking when disabled
-- **Row 2**: Accept All (green) + Reject All (red), disabled when there are no changed files or pending hunks
-- **Review title**: compact Refresh action; file selection is available directly in the Tracked Files panel
+- `cherryDiffControls` — tracking and bulk actions
+- `cherryDiffReview` — reviewed files and hunks
+- `cherryDiffFilters` — workspace-root-aware checkbox tree
 
-All buttons have tooltip text on hover. Communicates with extension.ts via `webviewView.webview.onDidReceiveMessage()`. The view updates when tracking state, changed files, or review state changes.
+Important commands:
 
-### `reviewTreeProvider.ts`
-Two-level TreeView: files at the root, hunks as children.
+- `cherryDiff.enableTracking`
+- `cherryDiff.disableTracking`
+- `cherryDiff.startReview` — retained ID; displayed as Refresh Review
+- `cherryDiff.acceptHunk` / `cherryDiff.rejectHunk`
+- `cherryDiff.acceptAllFile` / `cherryDiff.rejectAllFile`
+- `cherryDiff.acceptAll` / `cherryDiff.rejectAll`
+- `cherryDiff.clearPathOverrides`
+- `cherryDiff.nextHunk` / `cherryDiff.prevHunk`
 
-- `FileTreeItem`: shows relative path, hunk count, click opens diff view. `contextValue = 'file'` enables file-level inline menu buttons (Accept All, Reject All).
-- `HunkTreeItem`: shows "Hunk N: line X" (single line) or "Hunk N: lines X-Y" (range), using `getChangedLineRange()` to show only actual changed lines (not context). Click opens diff at that line. `contextValue = 'hunk'` enables hunk-level inline buttons (Accept, Reject). Carries `fsPath` and `hunkId` for command handlers.
+`cherryDiff.resetBaseline` remains a hidden compatibility alias for Accept All.
 
-### `baselineContentProvider.ts`
-Two `TextDocumentContentProvider` implementations:
+## Remaining limitations
 
-- `BaselineContentProvider` — serves baseline content for `cherry-diff-baseline:` URIs. Used as the left pane of the diff editor.
-- `CurrentContentProvider` — serves current content for `cherry-diff-current:` URIs. Only used for deleted files where the right pane can't open the real file.
-
-Both refresh when `onDidChangeReview` fires (so the diff editor updates after accept/reject).
-
-`openDiffForFile(fsPath, line?)` is the shared function that opens `vscode.diff` with the correct URIs, handling the deleted-file case by switching the right-side URI to the virtual provider. Optionally scrolls to a specific line (200ms delay).
-
-### `extension.ts`
-Wiring and command registration. Notable details:
-
-- **Auto-refresh**: `changeTracker.onDidChangeTrackedFiles` → debounced 800ms → `reviewManager.startReview()` (skipped if `applying` flag is set)
-- **Badge**: `treeView.badge = { value: fileCount, tooltip: "..." }` or `undefined` when 0. Shows number of changed files (not hunks).
-- **Changed files sync**: On `onDidChangeReview`, files no longer in the review are removed from the changed files set (so the Controls panel count stays accurate)
-- **Diff tab lifecycle**: Tracks `previousReviewFiles` set. When a file is resolved (removed from review), its diff tab is closed via `closeDiffTab()`. Other files are never auto-opened, so background review updates do not steal editor focus.
-- **`closeDiffTab(fsPath)`**: Finds the diff tab by matching the label pattern `"relativePath (Baseline ↔ Current)"` and closes it via `vscode.window.tabGroups.close()`.
-- **Context keys**: `cherryDiff.tracking` (controls play/stop button visibility), `cherryDiff.reviewActive`
-- **Initialization pipeline**: installs watchers first, clears the session blob store, finds and captures filtered files with bounded concurrency, drains paths changed during capture, then enables normal tracking
-- **Bulk resolution**: both Accept All and Reject All force a review refresh first so events waiting on the debounce timer are included. Accept All updates blobs only for changed files; it never rebuilds unchanged baselines. The legacy `cherryDiff.resetBaseline` ID is retained as a hidden alias for Accept All.
-
-## VS Code extension manifest (package.json)
-
-### Commands
-| Command ID | Title | Icon | Where it appears |
-|---|---|---|---|
-| `cherryDiff.startReview` | Start Review | `$(refresh)` | Review view title |
-| `cherryDiff.enableTracking` | Enable Tracking | `$(play)` | Controls webview |
-| `cherryDiff.disableTracking` | Disable Tracking | `$(debug-stop)` | Controls webview |
-| `cherryDiff.editFilters` | Show Tracked Files | `$(filter)` | Command palette |
-| `cherryDiff.acceptHunk` | Accept Hunk | `$(check)` | Hunk item inline |
-| `cherryDiff.rejectHunk` | Reject Hunk | `$(x)` | Hunk item inline |
-| `cherryDiff.acceptAllFile` | Accept All in File | `$(check-all)` | File item inline |
-| `cherryDiff.rejectAllFile` | Reject All in File | `$(close-all)` | File item inline |
-| `cherryDiff.acceptAll` | Accept All | — | Command palette only |
-| `cherryDiff.rejectAll` | Reject All | — | Command palette only |
-| `cherryDiff.openDiff` | Open Diff View | `$(diff)` | Tree item click |
-| `cherryDiff.openDiffAtLine` | (internal) | — | Hunk tree item click |
-| `cherryDiff.nextHunk` | Next Hunk | — | `Alt+]` keybinding |
-| `cherryDiff.prevHunk` | Previous Hunk | — | `Alt+[` keybinding |
-
-### Configuration
-| Setting | Type | Default | Description |
-|---|---|---|---|
-| `cherryDiff.autoSave` | `boolean` | `true` | Auto-save files after accept/reject |
-| `cherryDiff.baselineCaptureConcurrency` | `integer` | `12` | Concurrent baseline captures (range 1–64) |
-| `cherryDiff.includePaths` | `string[]` | `["**/*"]` | Glob patterns to include |
-| `cherryDiff.excludePaths` | `string[]` | (27 patterns) | Glob patterns to exclude |
-| `cherryDiff.pathOverrides` | `object` | `{}` | Per-path checkbox selections managed by the Tracked Files tree |
-
-Default excludes cover: node_modules, .venv, __pycache__, .git, .hg, .svn, dist, build, out, .next, .nuxt, coverage, .cache, .tox, .mypy_cache, .pytest_cache, vendor, target, *.min.js, *.min.css, and common lock files (package-lock.json, yarn.lock, pnpm-lock.yaml, Cargo.lock, poetry.lock, Pipfile.lock, go.sum).
-
-### Views
-- Activity bar container: `cherryDiff` with `$(diff)` icon
-- **Controls** (`cherryDiffControls`): WebviewView with buttons and status — appears at the top
-- **Review** (`cherryDiffReview`): TreeView with file/hunk hierarchy — appears below Controls
-- **Tracked Files** (`cherryDiffFilters`): Explorer-style file hierarchy with include/exclude checkboxes — appears at the bottom
-- Welcome messages for empty Review states (tracking on: "No changes to review", tracking off: "Tracking is disabled")
-
-## Baseline model
-
-The baseline is **the file's content at the moment the user explicitly starts tracking**. Tracking is disabled after activation until the user presses **Start Tracking**. Contents live in extension storage as session-scoped blobs; only the lightweight index and baselines for files currently under review live in memory.
-
-- **Accept** advances the baseline forward (baseline now includes the accepted change)
-- **Reject** does not change the baseline (the file is rewritten to remove the rejected change)
-- **Accept All** advances only changed-file baselines to their current states; unchanged baseline blobs are left untouched
-- **Disable tracking** clears all baselines
-- **Enable tracking** recaptures all baselines from current file state
-- Edits made while tracking is disabled are invisible (baked into the new baseline when re-enabled)
-- New files (no baseline captured at startup) are treated as having an empty baseline — the entire file shows as "added"
-- Deleted files (file removed after baseline capture) are treated as having empty current content — the entire file shows as "removed"
-
-## Known limitations and potential improvements
-
-1. **Session-only index** — blobs use `context.storageUri`, but the path index is intentionally not restored after reload; current state is recaptured for a new tracking session.
-2. **No undo** — once you accept or reject, there's no way to undo within the extension. The user would need to use VS Code's undo or git.
-3. **Startup I/O** — agent-agnostic rejection requires original bytes to be captured before arbitrary external writes. Disk-backed blobs remove workspace-sized memory usage, but the initial snapshot still reads all included files.
-4. **Hunk ID instability** — IDs are regenerated on every re-diff. This can cause the TreeView to flicker/collapse after accept/reject.
-5. **Diff editor scroll** — the 200ms setTimeout for scrolling to a hunk line is fragile. Could use a more reliable approach.
-6. **No rename detection** — file renames show up as a delete + create, not a rename.
-7. **Global hunk counter** — `nextHunkId` never resets, could overflow in very long sessions (unlikely in practice).
-8. **Single-repo assumption** — `ChangeTracker` doesn't scope to specific workspace folders.
+1. Baseline indexes are session-only and intentionally not restored after reload.
+2. A process crash can leave an orphaned unique session directory in extension storage.
+3. There is no extension-owned undo history after accepting or rejecting.
+4. Directory renames are represented through create/delete events rather than rename identity.
+5. Symbolic-link directories are not traversed recursively.
+6. Initial tracking must still read and snapshot every included file.
+7. Binary and unsupported encodings support whole-file resolution only.
+8. Very large or pathologically different text files support whole-file resolution only.
 
 ## Development
 
 ```bash
-# Install dependencies
 npm install
-
-# Compile
 npm run compile
-
-# Watch mode (auto-recompile on save)
-npm run watch
-
-# Run in VS Code
-# Press F5 to launch Extension Development Host
-
-# Package as .vsix
-npx @vscode/vsce package
+npm run lint
+npm test
+npm run check
 ```
 
-## Dependencies
+`npm run compile` cleans `out/` before compiling so stale generated files cannot survive source removal.
 
-- **Runtime**: `diff` (v7) — the only runtime dependency. Provides `structuredPatch`, `applyPatch`, `formatPatch`.
-- **Dev**: `@types/vscode`, `@types/diff`, `@types/node`, `typescript`, `eslint`
+Runtime dependencies:
+
+- `diff` — structured text patches
+- `minimatch` — cached glob semantics
+
+Shared operational constants belong in `src/constants.ts`; do not introduce module-local configuration constants.

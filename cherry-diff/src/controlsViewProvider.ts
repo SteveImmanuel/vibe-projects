@@ -1,97 +1,102 @@
+import { randomUUID } from 'crypto';
 import * as vscode from 'vscode';
-import { ChangeTracker } from './changeTracker';
 import { ReviewManager } from './reviewManager';
+import { TrackingController } from './trackingController';
+
+interface ControlsState {
+  tracking: boolean;
+  initializing: boolean;
+  changedResources: number;
+  pendingHunks: number;
+}
 
 export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
-  public static readonly viewType = 'cherryDiffControls';
+  static readonly viewType = 'cherryDiffControls';
 
-  private _view?: vscode.WebviewView;
+  private view?: vscode.WebviewView;
+  private lastStateKey: string | undefined;
   private readonly disposables: vscode.Disposable[];
 
   constructor(
-    private changeTracker: ChangeTracker,
-    private reviewManager: ReviewManager
+    private readonly controller: TrackingController,
+    private readonly reviews: ReviewManager
   ) {
     this.disposables = [
-      changeTracker.onDidChangeTrackedFiles(() => this.updateView()),
-      reviewManager.onDidChangeReview(() => this.updateView()),
+      controller.onDidChangeState(() => this.updateView()),
     ];
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
-    this._view = webviewView;
+    this.view = webviewView;
+    this.lastStateKey = undefined;
+    webviewView.webview.options = { enableScripts: true };
 
-    webviewView.webview.options = {
-      enableScripts: true,
-    };
-
-    this.disposables.push(webviewView.webview.onDidReceiveMessage((message) => {
-      switch (message.command) {
-        case 'enableTracking':
-          vscode.commands.executeCommand('cherryDiff.enableTracking');
-          break;
-        case 'disableTracking':
-          vscode.commands.executeCommand('cherryDiff.disableTracking');
-          break;
-        case 'acceptAll':
-          vscode.commands.executeCommand('cherryDiff.acceptAll');
-          break;
-        case 'rejectAll':
-          vscode.commands.executeCommand('cherryDiff.rejectAll');
-          break;
+    this.disposables.push(webviewView.webview.onDidReceiveMessage(
+      (message: { command?: unknown }) => {
+        if (typeof message.command !== 'string') {
+          return;
+        }
+        const command = {
+          enableTracking: 'cherryDiff.enableTracking',
+          disableTracking: 'cherryDiff.disableTracking',
+          acceptAll: 'cherryDiff.acceptAll',
+          rejectAll: 'cherryDiff.rejectAll',
+        }[message.command];
+        if (command) {
+          void vscode.commands.executeCommand(command).then(undefined, (error) => {
+            console.error(`[Cherry Diff] Failed to execute ${command}`, error);
+          });
+        }
       }
-    }));
+    ));
 
     this.updateView();
   }
 
   updateView(): void {
-    if (!this._view) {
+    if (!this.view) {
       return;
     }
 
-    const isTracking = this.changeTracker.isTracking();
-    const isInitializing = this.changeTracker.isInitializing();
-    const changedCount = this.changeTracker.getChangedFiles().size;
-    const pendingHunks = this.reviewManager.getAllPendingHunks().length;
-
-    this._view.webview.html = this.getHtml(
-      isTracking,
-      isInitializing,
-      changedCount,
-      pendingHunks
-    );
+    const state: ControlsState = {
+      tracking: this.controller.isTracking(),
+      initializing: this.controller.isInitializing(),
+      changedResources: this.controller.getChangedResourceCount(),
+      pendingHunks: this.reviews.getPendingHunks().length,
+    };
+    const stateKey = JSON.stringify(state);
+    if (stateKey === this.lastStateKey) {
+      return;
+    }
+    this.lastStateKey = stateKey;
+    this.view.webview.html = this.getHtml(this.view.webview, state);
   }
 
   dispose(): void {
     for (const disposable of this.disposables) {
       disposable.dispose();
     }
-    this._view = undefined;
+    this.view = undefined;
   }
 
-  private getHtml(
-    isTracking: boolean,
-    isInitializing: boolean,
-    changedCount: number,
-    pendingHunks: number
-  ): string {
-    const trackingStatus = isInitializing
+  private getHtml(webview: vscode.Webview, state: ControlsState): string {
+    const nonce = randomUUID().replace(/-/g, '');
+    const trackingStatus = state.initializing
       ? 'Preparing disk-backed baselines'
-      : isTracking
-        ? `Tracking active &middot; ${changedCount} file${changedCount !== 1 ? 's' : ''} changed`
+      : state.tracking
+        ? `Tracking active &middot; ${state.changedResources} file${state.changedResources !== 1 ? 's' : ''} changed`
         : 'Tracking disabled';
-
-    const pendingStatus = pendingHunks > 0
-      ? `${pendingHunks} hunk${pendingHunks !== 1 ? 's' : ''} pending`
+    const pendingStatus = state.pendingHunks > 0
+      ? `${state.pendingHunks} hunk${state.pendingHunks !== 1 ? 's' : ''} pending`
       : '';
-    const bulkActionsDisabled = changedCount === 0 && pendingHunks === 0
+    const bulkActionsDisabled = state.changedResources === 0 && state.pendingHunks === 0
       ? ' disabled'
       : '';
 
     return /* html */ `<!DOCTYPE html>
 <html>
 <head>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
   <style>
     body {
       padding: 8px 12px;
@@ -100,73 +105,45 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.
       color: var(--vscode-foreground);
     }
     .status {
-      font-size: 11px;
-      color: var(--vscode-descriptionForeground);
       margin-bottom: 10px;
+      color: var(--vscode-descriptionForeground);
+      font-size: 11px;
     }
-    .status .highlight {
-      color: var(--vscode-foreground);
-    }
+    .status .highlight { color: var(--vscode-foreground); }
     .btn-row {
       display: flex;
       gap: 6px;
       margin-bottom: 6px;
     }
     button {
+      display: flex;
       flex: 1;
+      align-items: center;
+      justify-content: center;
       padding: 6px 10px;
       border: 1px solid var(--vscode-button-border, transparent);
       border-radius: 3px;
       font-family: var(--vscode-font-family);
       font-size: 12px;
       cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 5px;
     }
+    button:disabled { cursor: default; opacity: 0.7; }
     .btn-primary {
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
     }
-    .btn-primary:hover {
-      background: var(--vscode-button-hoverBackground);
-    }
-    button:disabled {
-      cursor: default;
-      opacity: 0.7;
-    }
-    .btn-secondary {
-      background: var(--vscode-button-secondaryBackground);
-      color: var(--vscode-button-secondaryForeground);
-    }
-    .btn-secondary:hover {
-      background: var(--vscode-button-secondaryHoverBackground);
-    }
-    .btn-danger {
-      background: #6e2020;
-      color: #fff;
-      border: 1px solid #8b2a2a;
-    }
-    .btn-danger:hover {
-      background: #832626;
-    }
-    .btn-accept {
-      background: #1a7f37;
-      color: #fff;
-      border: 1px solid #238636;
-    }
-    .btn-accept:hover {
-      background: #238636;
-    }
-    .btn-reject {
+    .btn-primary:hover { background: var(--vscode-button-hoverBackground); }
+    .btn-danger, .btn-reject {
       background: #8b2a2a;
       color: #fff;
-      border: 1px solid transparent;
     }
-    .btn-reject:hover {
-      background: #a33232;
+    .btn-danger:hover, .btn-reject:hover { background: #a33232; }
+    .btn-accept {
+      border-color: #238636;
+      background: #1a7f37;
+      color: #fff;
     }
+    .btn-accept:hover { background: #238636; }
   </style>
 </head>
 <body>
@@ -174,31 +151,31 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.
     ${trackingStatus}${pendingStatus ? ` &middot; <span class="highlight">${pendingStatus}</span>` : ''}
   </div>
 
-  ${isInitializing
+  ${state.initializing
     ? `
   <div class="btn-row">
-    <button class="btn-secondary" disabled>Preparing baselines</button>
+    <button class="btn-danger" data-command="disableTracking" title="Cancel baseline preparation">Stop Tracking</button>
   </div>`
-    : isTracking
-    ? `
+    : state.tracking
+      ? `
   <div class="btn-row">
-    <button class="btn-danger" onclick="send('disableTracking')" title="Stop watching for file changes and clear all baselines">Stop Tracking</button>
+    <button class="btn-danger" data-command="disableTracking" title="Stop watching for changes and clear this session's baselines">Stop Tracking</button>
   </div>
   <div class="btn-row">
-    <button class="btn-accept" onclick="send('acceptAll')" title="Accept all pending changes without rebuilding unchanged file baselines"${bulkActionsDisabled}>Accept All</button>
-    <button class="btn-reject" onclick="send('rejectAll')" title="Reject all pending changes and revert files to their baseline state"${bulkActionsDisabled}>Reject All</button>
+    <button class="btn-accept" data-command="acceptAll" title="Accept every pending change"${bulkActionsDisabled}>Accept All</button>
+    <button class="btn-reject" data-command="rejectAll" title="Revert every pending change to its baseline"${bulkActionsDisabled}>Reject All</button>
   </div>`
-    : `
+      : `
   <div class="btn-row">
-    <button class="btn-primary" onclick="send('enableTracking')" title="Start watching for file changes and capture current file states as baselines">Start Tracking</button>
-  </div>`
-  }
+    <button class="btn-primary" data-command="enableTracking" title="Capture baselines and start watching for changes">Start Tracking</button>
+  </div>`}
 
-  <script>
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-    function send(command) {
-      vscode.postMessage({ command });
-    }
+    document.addEventListener('click', (event) => {
+      const command = event.target.dataset.command;
+      if (command) { vscode.postMessage({ command }); }
+    });
   </script>
 </body>
 </html>`;

@@ -17,7 +17,11 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onView:cherryDiffControls",
+    "onView:cherryDiffReview",
+    "onView:cherryDiffFilters",
+    "onCommand:cherryDiff.enableTracking",
+    "onCommand:cherryDiff.resetBaseline"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -81,32 +85,27 @@
             "**/go.sum"
           ],
           "description": "Glob patterns for files/directories to exclude from tracking."
-        },
-        "cherryDiff.pathOverrides": {
-          "type": "object",
-          "default": {},
-          "additionalProperties": {
-            "type": "boolean"
-          },
-          "description": "Per-file and per-directory include/exclude selections managed by the Tracked Files tree. Nearest selections override glob patterns."
         }
       }
     },
     "commands": [
       {
         "command": "cherryDiff.startReview",
-        "title": "Cherry Diff: Start Review",
-        "icon": "$(refresh)"
+        "title": "Cherry Diff: Refresh Review",
+        "icon": "$(refresh)",
+        "enablement": "cherryDiff.tracking"
       },
       {
         "command": "cherryDiff.enableTracking",
-        "title": "Enable Tracking",
-        "icon": "$(play)"
+        "title": "Cherry Diff: Start Tracking",
+        "icon": "$(play)",
+        "enablement": "!cherryDiff.tracking && !cherryDiff.initializing"
       },
       {
         "command": "cherryDiff.disableTracking",
-        "title": "Disable Tracking",
-        "icon": "$(debug-stop)"
+        "title": "Cherry Diff: Stop Tracking",
+        "icon": "$(debug-stop)",
+        "enablement": "cherryDiff.tracking || cherryDiff.initializing"
       },
       {
         "command": "cherryDiff.acceptHunk",
@@ -164,13 +163,23 @@
       "view/title": [
         {
           "command": "cherryDiff.startReview",
-          "when": "view == cherryDiffReview",
+          "when": "view == cherryDiffReview && cherryDiff.tracking",
           "group": "navigation"
         },
         {
           "command": "cherryDiff.clearPathOverrides",
-          "when": "view == cherryDiffFilters",
+          "when": "view == cherryDiffFilters && !cherryDiff.initializing",
           "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "cherryDiff.acceptHunk",
+          "when": "false"
+        },
+        {
+          "command": "cherryDiff.rejectHunk",
+          "when": "false"
         }
       ],
       "view/item/context": [
@@ -245,28 +254,35 @@
       },
       {
         "view": "cherryDiffReview",
+        "contents": "Preparing baselines.",
+        "when": "cherryDiff.initializing"
+      },
+      {
+        "view": "cherryDiffReview",
         "contents": "Tracking is disabled.",
-        "when": "!cherryDiff.tracking"
+        "when": "!cherryDiff.tracking && !cherryDiff.initializing"
       }
     ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\"",
+    "compile": "npm run clean && tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
-    "test": "npm run compile && node --test"
+    "test": "npm run compile && node --test",
+    "check": "npm test && npm run lint"
   },
   "devDependencies": {
-    "@types/diff": "^6.0.0",
-    "@types/node": "^20.11.0",
-    "@types/vscode": "^1.85.0",
-    "@typescript-eslint/eslint-plugin": "^6.21.0",
-    "@typescript-eslint/parser": "^6.21.0",
-    "eslint": "^8.56.0",
-    "typescript": "^5.3.0"
+    "@types/node": "18.19.130",
+    "@types/vscode": "1.85.0",
+    "@typescript-eslint/eslint-plugin": "8.67.0",
+    "@typescript-eslint/parser": "8.67.0",
+    "eslint": "8.57.1",
+    "typescript": "5.9.3"
   },
   "dependencies": {
-    "diff": "^7.0.0"
+    "diff": "8.0.3",
+    "minimatch": "9.0.7"
   }
 }
