@@ -22,16 +22,17 @@ let changeTracker: ChangeTracker;
 let reviewManager: ReviewManager;
 let treeView: vscode.TreeView<ReviewTreeItem>;
 let reviewDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+let trackingInitializationPromise: Promise<boolean> | undefined;
+let initializationGeneration = 0;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  baselineService = new BaselineService();
+  const baselineStorageUri = vscode.Uri.joinPath(
+    context.storageUri ?? context.globalStorageUri,
+    'baseline-session'
+  );
+  baselineService = new BaselineService(baselineStorageUri);
   changeTracker = new ChangeTracker();
   reviewManager = new ReviewManager(baselineService, changeTracker);
-
-  // Capture baselines at startup using include/exclude filters
-  await captureFilteredBaselines(baselineService);
-  changeTracker.startTracking();
-  await vscode.commands.executeCommand('setContext', 'cherryDiff.tracking', true);
 
   // Virtual document providers for diff view
   const baselineContentProvider = new BaselineContentProvider(reviewManager);
@@ -120,21 +121,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // Enable tracking
     vscode.commands.registerCommand('cherryDiff.enableTracking', async () => {
-      baselineService.clearBaselines();
-      await captureFilteredBaselines(baselineService);
-      changeTracker.startTracking();
-      await vscode.commands.executeCommand('setContext', 'cherryDiff.tracking', true);
-      controlsProvider.updateView();
+      if (!changeTracker.isTracking()) {
+        await initializeTracking(controlsProvider);
+      }
     }),
 
     // Reset baseline — capture current state as the new baseline
     vscode.commands.registerCommand('cherryDiff.resetBaseline', async () => {
       reviewManager.clearReview();
       changeTracker.clearChangedFiles();
-      baselineService.clearBaselines();
-      await captureFilteredBaselines(baselineService);
+      await initializeTracking(controlsProvider);
       updateBadge();
-      controlsProvider.updateView();
     }),
 
     // Disable tracking
@@ -143,9 +140,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         clearTimeout(reviewDebounceTimer);
         reviewDebounceTimer = undefined;
       }
+      initializationGeneration++;
       changeTracker.stopTracking();
       reviewManager.clearReview();
-      baselineService.clearBaselines();
+      if (trackingInitializationPromise) {
+        await trackingInitializationPromise;
+      }
+      await baselineService.clearBaselines();
       await vscode.commands.executeCommand('setContext', 'cherryDiff.tracking', false);
       await vscode.commands.executeCommand('setContext', 'cherryDiff.reviewActive', false);
       updateBadge();
@@ -254,20 +255,121 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     treeView
   );
 
+  // Install watchers before snapshotting so writes during initialization can
+  // be recaptured before normal tracking begins. Event listeners are already
+  // registered when normal tracking is enabled, avoiding a post-init gap.
+  await initializeTracking(controlsProvider);
   updateBadge();
 }
 
-async function captureFilteredBaselines(baselineService: BaselineService): Promise<void> {
+async function initializeTracking(
+  controlsProvider?: ControlsViewProvider
+): Promise<boolean> {
+  if (trackingInitializationPromise) {
+    return trackingInitializationPromise;
+  }
+
+  const generation = ++initializationGeneration;
+  const promise = performTrackingInitialization(generation, controlsProvider);
+  trackingInitializationPromise = promise;
+
+  try {
+    return await promise;
+  } finally {
+    if (trackingInitializationPromise === promise) {
+      trackingInitializationPromise = undefined;
+    }
+  }
+}
+
+async function performTrackingInitialization(
+  generation: number,
+  controlsProvider?: ControlsViewProvider
+): Promise<boolean> {
+  changeTracker.beginInitialization();
+  await vscode.commands.executeCommand('setContext', 'cherryDiff.tracking', false);
+  await vscode.commands.executeCommand('setContext', 'cherryDiff.reviewActive', false);
+  controlsProvider?.updateView();
+
+  const isCancelled = (): boolean => (
+    generation !== initializationGeneration || !changeTracker.isInitializing()
+  );
+
+  try {
+    await baselineService.clearBaselines();
+
+    const unstablePaths = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Cherry Diff: Preparing disk-backed baselines',
+        cancellable: false,
+      },
+      async (progress) => captureFilteredBaselines(progress, isCancelled)
+    );
+
+    if (isCancelled()) {
+      return false;
+    }
+
+    let pendingPaths = new Set<string>([
+      ...unstablePaths,
+      ...changeTracker.takeInitializationChanges(),
+    ]);
+
+    while (pendingPaths.size > 0 && !isCancelled()) {
+      const paths = Array.from(pendingPaths);
+      const unstable = await captureBaselinePaths(
+        paths.map((fsPath) => vscode.Uri.file(fsPath)),
+        undefined,
+        isCancelled
+      );
+      pendingPaths = new Set<string>([
+        ...unstable,
+        ...changeTracker.takeInitializationChanges(),
+      ]);
+    }
+
+    if (isCancelled() || !changeTracker.finishInitialization()) {
+      return false;
+    }
+
+    await vscode.commands.executeCommand('setContext', 'cherryDiff.tracking', true);
+    console.log(
+      `[Cherry Diff] ${baselineService.getBaselineCount()} disk-backed baselines ready.`
+    );
+    return true;
+  } catch (error) {
+    if (generation === initializationGeneration) {
+      changeTracker.stopTracking();
+      await vscode.commands.executeCommand('setContext', 'cherryDiff.tracking', false);
+      console.error('[Cherry Diff] Failed to prepare baselines', error);
+      vscode.window.showErrorMessage(
+        'Cherry Diff: Failed to prepare disk-backed baselines. Tracking was not started.'
+      );
+    }
+    return false;
+  } finally {
+    controlsProvider?.updateView();
+  }
+}
+
+async function captureFilteredBaselines(
+  progress: vscode.Progress<{ message?: string; increment?: number }>,
+  isCancelled: () => boolean
+): Promise<Set<string>> {
   const config = vscode.workspace.getConfiguration('cherryDiff');
   const includes: string[] = config.get('includePaths', ['**/*']);
   const excludes: string[] = config.get('excludePaths', []);
-
   const excludePattern = excludes.length > 0
     ? `{${excludes.join(',')}}`
     : undefined;
 
+  progress.report({ message: 'Finding included files…' });
   const allFiles: vscode.Uri[] = [];
   for (const includePattern of includes) {
+    if (isCancelled()) {
+      return new Set();
+    }
     const files = await vscode.workspace.findFiles(includePattern, excludePattern, 50000);
     allFiles.push(...files);
   }
@@ -281,20 +383,52 @@ async function captureFilteredBaselines(baselineService: BaselineService): Promi
     return true;
   });
 
-  console.log(`[Cherry Diff] Capturing baselines for ${uniqueFiles.length} files`);
+  // Capture visible/open files first so their pre-edit state is secured as
+  // early as possible while the rest of a large workspace is scanned.
+  const openPaths = new Set(
+    vscode.workspace.textDocuments
+      .filter((document) => document.uri.scheme === 'file')
+      .map((document) => document.uri.fsPath)
+  );
+  uniqueFiles.sort((a, b) => Number(openPaths.has(b.fsPath)) - Number(openPaths.has(a.fsPath)));
 
-  for (const uri of uniqueFiles) {
-    try {
-      const stat = await vscode.workspace.fs.stat(uri);
-      if ((stat.type & vscode.FileType.Directory) === 0) {
-        await baselineService.captureBaseline(uri);
+  console.log(`[Cherry Diff] Snapshotting ${uniqueFiles.length} files to disk.`);
+  return captureBaselinePaths(uniqueFiles, progress, isCancelled);
+}
+
+async function captureBaselinePaths(
+  uris: vscode.Uri[],
+  progress: vscode.Progress<{ message?: string; increment?: number }> | undefined,
+  isCancelled: () => boolean
+): Promise<Set<string>> {
+  const unstablePaths = new Set<string>();
+  let nextIndex = 0;
+  let completed = 0;
+  const workerCount = Math.min(12, uris.length);
+
+  const worker = async (): Promise<void> => {
+    while (!isCancelled()) {
+      const index = nextIndex++;
+      if (index >= uris.length) {
+        return;
       }
-    } catch {
-      // skip
-    }
-  }
 
-  console.log('[Cherry Diff] Baselines captured.');
+      const uri = uris[index];
+      const result = await baselineService.captureBaseline(uri);
+      if (result === 'unstable') {
+        unstablePaths.add(uri.fsPath);
+      }
+
+      completed++;
+      progress?.report({
+        message: `${completed.toLocaleString()} / ${uris.length.toLocaleString()} files`,
+        increment: uris.length > 0 ? 100 / uris.length : 100,
+      });
+    }
+  };
+
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return unstablePaths;
 }
 
 function updateBadge(): void {

@@ -1,66 +1,235 @@
 import * as vscode from 'vscode';
+import { createHash } from 'crypto';
 
-/**
- * Manages file baselines by capturing snapshots when tracking starts.
- * Works with any project (Git, non-Git, no VCS).
- */
 export interface BaselineSnapshot {
   content: string;
   exists: boolean;
 }
 
-export class BaselineService implements vscode.Disposable {
-  private baselines = new Map<string, BaselineSnapshot>(); // fsPath -> baseline state
+export type BaselineCaptureResult = 'captured' | 'missing' | 'unstable' | 'skipped';
 
-  /**
-   * Capture the current content of a file as its baseline.
-   */
-  async captureBaseline(uri: vscode.Uri): Promise<void> {
+interface BaselineEntry {
+  exists: boolean;
+  blobHash?: string;
+  size: number;
+  modifiedTime: number;
+}
+
+/**
+ * Stores baseline contents in extension storage and keeps only a lightweight
+ * path-to-blob index in extension-host memory. Blob contents are loaded only
+ * when a changed file needs to be reviewed.
+ */
+export class BaselineService implements vscode.Disposable {
+  private readonly baselines = new Map<string, BaselineEntry>();
+  private readonly knownBlobs = new Set<string>();
+  private readonly blobRefCounts = new Map<string, number>();
+  private readonly blobsUri: vscode.Uri;
+  private initialized = false;
+
+  constructor(private readonly storageUri: vscode.Uri) {
+    this.blobsUri = vscode.Uri.joinPath(storageUri, 'blobs');
+  }
+
+  /** Remove the previous session and prepare an empty baseline store. */
+  async clearBaselines(): Promise<void> {
+    this.baselines.clear();
+    this.knownBlobs.clear();
+    this.blobRefCounts.clear();
+
     try {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      this.baselines.set(uri.fsPath, { content: doc.getText(), exists: true });
+      await vscode.workspace.fs.delete(this.storageUri, { recursive: true });
     } catch {
-      // File might not exist or be readable
+      // The store does not exist on the first run.
+    }
+
+    await vscode.workspace.fs.createDirectory(this.blobsUri);
+    this.initialized = true;
+  }
+
+  /** Capture a file directly as bytes without opening a VS Code document. */
+  async captureBaseline(uri: vscode.Uri): Promise<BaselineCaptureResult> {
+    await this.ensureInitialized();
+
+    let statBefore: vscode.FileStat;
+    try {
+      statBefore = await vscode.workspace.fs.stat(uri);
+    } catch {
+      await this.captureMissingBaseline(uri.fsPath);
+      return 'missing';
+    }
+    if ((statBefore.type & vscode.FileType.Directory) !== 0) {
+      return 'skipped';
+    }
+
+    let bytes: Uint8Array;
+    let statAfter: vscode.FileStat;
+    const openDocument = vscode.workspace.textDocuments.find(
+      (document) => document.uri.scheme === 'file' && document.uri.fsPath === uri.fsPath
+    );
+    const documentVersion = openDocument?.version;
+
+    try {
+      // Preserve unsaved editor state without opening every workspace file.
+      bytes = openDocument
+        ? new TextEncoder().encode(openDocument.getText())
+        : await vscode.workspace.fs.readFile(uri);
+      statAfter = await vscode.workspace.fs.stat(uri);
+    } catch (error) {
+      try {
+        await vscode.workspace.fs.stat(uri);
+      } catch {
+        await this.captureMissingBaseline(uri.fsPath);
+        return 'missing';
+      }
+      throw error;
+    }
+
+    // If a write overlapped the read, request another capture rather than
+    // keeping a potentially torn copy.
+    if (documentVersion !== undefined && openDocument?.version !== documentVersion) {
+      return 'unstable';
+    }
+    if (!openDocument
+      && (statBefore.mtime !== statAfter.mtime || statBefore.size !== statAfter.size)) {
+      return 'unstable';
+    }
+
+    const blobHash = await this.storeBlob(bytes);
+    await this.setBaselineEntry(uri.fsPath, {
+      exists: true,
+      blobHash,
+      size: bytes.byteLength,
+      modifiedTime: statAfter.mtime,
+    });
+    return 'captured';
+  }
+
+  /** Record that a path did not exist at the baseline boundary. */
+  private async captureMissingBaseline(fsPath: string): Promise<void> {
+    await this.ensureInitialized();
+    await this.setBaselineEntry(fsPath, {
+      exists: false,
+      size: 0,
+      modifiedTime: 0,
+    });
+  }
+
+  /** Load baseline text only for a file that has entered review. */
+  async getSnapshot(fsPath: string): Promise<BaselineSnapshot | undefined> {
+    const entry = this.baselines.get(fsPath);
+    if (!entry) {
+      return undefined;
+    }
+    if (!entry.exists) {
+      return { content: '', exists: false };
+    }
+    if (!entry.blobHash) {
+      throw new Error(`Baseline blob is missing for ${fsPath}`);
+    }
+
+    const bytes = await vscode.workspace.fs.readFile(this.getBlobUri(entry.blobHash));
+    return {
+      content: new TextDecoder().decode(bytes),
+      exists: true,
+    };
+  }
+
+  /** Store an accepted state as the new baseline for one file. */
+  async updateBaseline(
+    fsPath: string,
+    content: string,
+    exists = true
+  ): Promise<void> {
+    await this.ensureInitialized();
+
+    if (!exists) {
+      await this.setBaselineEntry(fsPath, {
+        exists: false,
+        size: 0,
+        modifiedTime: 0,
+      });
+      return;
+    }
+
+    const bytes = new TextEncoder().encode(content);
+    const blobHash = await this.storeBlob(bytes);
+    await this.setBaselineEntry(fsPath, {
+      exists: true,
+      blobHash,
+      size: bytes.byteLength,
+      modifiedTime: Date.now(),
+    });
+  }
+
+  getBaselineCount(): number {
+    return this.baselines.size;
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await vscode.workspace.fs.createDirectory(this.blobsUri);
+      this.initialized = true;
     }
   }
 
-  /**
-   * Get the baseline content for a file, or undefined if not captured.
-   */
-  getBaseline(fsPath: string): string | undefined {
-    return this.baselines.get(fsPath)?.content;
+  private async storeBlob(bytes: Uint8Array): Promise<string> {
+    const hash = createHash('sha256').update(bytes).digest('hex');
+    if (this.knownBlobs.has(hash)) {
+      return hash;
+    }
+
+    const blobDirectory = vscode.Uri.joinPath(this.blobsUri, hash.slice(0, 2));
+    await vscode.workspace.fs.createDirectory(blobDirectory);
+    const blobUri = this.getBlobUri(hash);
+    try {
+      await vscode.workspace.fs.stat(blobUri);
+    } catch {
+      await vscode.workspace.fs.writeFile(blobUri, bytes);
+    }
+    this.knownBlobs.add(hash);
+    return hash;
   }
 
-  /**
-   * Get the complete baseline state, including whether the file existed.
-   */
-  getSnapshot(fsPath: string): BaselineSnapshot | undefined {
-    const snapshot = this.baselines.get(fsPath);
-    return snapshot ? { ...snapshot } : undefined;
+  private getBlobUri(hash: string): vscode.Uri {
+    return vscode.Uri.joinPath(this.blobsUri, hash.slice(0, 2), hash);
   }
 
-  /**
-   * Update the baseline for a file (e.g. after accepting a change).
-   */
-  updateBaseline(fsPath: string, content: string, exists = true): void {
-    this.baselines.set(fsPath, { content, exists });
-  }
+  private async setBaselineEntry(fsPath: string, entry: BaselineEntry): Promise<void> {
+    const previousHash = this.baselines.get(fsPath)?.blobHash;
+    const nextHash = entry.blobHash;
+    this.baselines.set(fsPath, entry);
 
-  /**
-   * Check if we have a baseline for this file.
-   */
-  hasBaseline(fsPath: string): boolean {
-    return this.baselines.has(fsPath);
-  }
+    if (previousHash === nextHash) {
+      return;
+    }
+    if (nextHash) {
+      this.blobRefCounts.set(nextHash, (this.blobRefCounts.get(nextHash) ?? 0) + 1);
+    }
+    if (!previousHash) {
+      return;
+    }
 
-  /**
-   * Clear all captured baselines.
-   */
-  clearBaselines(): void {
-    this.baselines.clear();
+    const remainingReferences = (this.blobRefCounts.get(previousHash) ?? 1) - 1;
+    if (remainingReferences > 0) {
+      this.blobRefCounts.set(previousHash, remainingReferences);
+      return;
+    }
+
+    this.blobRefCounts.delete(previousHash);
+    this.knownBlobs.delete(previousHash);
+    try {
+      await vscode.workspace.fs.delete(this.getBlobUri(previousHash));
+    } catch {
+      // The next session reset removes any orphaned blob.
+    }
   }
 
   dispose(): void {
-    this.clearBaselines();
+    // The next activation clears the session store. Avoid asynchronous file
+    // operations during extension-host shutdown.
+    this.baselines.clear();
+    this.knownBlobs.clear();
+    this.blobRefCounts.clear();
   }
 }

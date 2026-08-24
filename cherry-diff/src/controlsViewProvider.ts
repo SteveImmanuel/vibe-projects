@@ -57,10 +57,16 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.
     }
 
     const isTracking = this.changeTracker.isTracking();
+    const isInitializing = this.changeTracker.isInitializing();
     const changedCount = this.changeTracker.getChangedFiles().size;
     const pendingHunks = this.reviewManager.getAllPendingHunks().length;
 
-    this._view.webview.html = this.getHtml(isTracking, changedCount, pendingHunks);
+    this._view.webview.html = this.getHtml(
+      isTracking,
+      isInitializing,
+      changedCount,
+      pendingHunks
+    );
   }
 
   dispose(): void {
@@ -70,10 +76,17 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.
     this._view = undefined;
   }
 
-  private getHtml(isTracking: boolean, changedCount: number, pendingHunks: number): string {
-    const trackingStatus = isTracking
-      ? `Tracking active &middot; ${changedCount} file${changedCount !== 1 ? 's' : ''} changed`
-      : 'Tracking disabled';
+  private getHtml(
+    isTracking: boolean,
+    isInitializing: boolean,
+    changedCount: number,
+    pendingHunks: number
+  ): string {
+    const trackingStatus = isInitializing
+      ? 'Preparing disk-backed baselines&hellip;'
+      : isTracking
+        ? `Tracking active &middot; ${changedCount} file${changedCount !== 1 ? 's' : ''} changed`
+        : 'Tracking disabled';
 
     const pendingStatus = pendingHunks > 0
       ? `${pendingHunks} hunk${pendingHunks !== 1 ? 's' : ''} pending`
@@ -122,6 +135,10 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.
     .btn-primary:hover {
       background: var(--vscode-button-hoverBackground);
     }
+    button:disabled {
+      cursor: default;
+      opacity: 0.7;
+    }
     .btn-secondary {
       background: var(--vscode-button-secondaryBackground);
       color: var(--vscode-button-secondaryForeground);
@@ -160,7 +177,12 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.
     ${trackingStatus}${pendingStatus ? ` &middot; <span class="highlight">${pendingStatus}</span>` : ''}
   </div>
 
-  ${isTracking
+  ${isInitializing
+    ? `
+  <div class="btn-row">
+    <button class="btn-secondary" disabled>Preparing baselines&hellip;</button>
+  </div>`
+    : isTracking
     ? `
   <div class="btn-row">
     <button class="btn-danger" onclick="send('disableTracking')" title="Stop watching for file changes and clear all baselines">Stop Tracking</button>

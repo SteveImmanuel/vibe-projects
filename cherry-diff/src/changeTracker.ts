@@ -8,54 +8,73 @@ export class ChangeTracker implements vscode.Disposable {
   private changedFiles = new Set<string>();
   private disposables: vscode.Disposable[] = [];
   private tracking = false;
+  private initializing = false;
+  private initializationChanges = new Set<string>();
 
   private _onDidChangeTrackedFiles = new vscode.EventEmitter<Set<string>>();
   readonly onDidChangeTrackedFiles = this._onDidChangeTrackedFiles.event;
 
-  startTracking(): void {
-    if (this.tracking) {
-      return;
-    }
-    this.tracking = true;
+  /** Start watching while the initial disk snapshot is being created. */
+  beginInitialization(): void {
+    this.stopTracking();
+    this.initializing = true;
     this.changedFiles.clear();
+    this.initializationChanges.clear();
+    this.installWatchers();
+  }
 
+  /** Atomically switch already-installed watchers to normal tracking. */
+  finishInitialization(): boolean {
+    if (!this.initializing) {
+      return false;
+    }
+    this.initializing = false;
+    this.tracking = true;
+    return true;
+  }
+
+  private installWatchers(): void {
     this.disposables.push(
       vscode.workspace.onDidChangeTextDocument((e) => {
         if (e.document.uri.scheme === 'file' && e.contentChanges.length > 0) {
-          if (this.shouldTrack(e.document.uri)) {
-            this.changedFiles.add(e.document.uri.fsPath);
-            this._onDidChangeTrackedFiles.fire(this.changedFiles);
-          }
+          this.recordChange(e.document.uri);
         }
       })
     );
 
     const watcher = vscode.workspace.createFileSystemWatcher('**/*');
     this.disposables.push(
-      watcher.onDidChange((uri) => {
-        if (this.shouldTrack(uri)) {
-          this.changedFiles.add(uri.fsPath);
-          this._onDidChangeTrackedFiles.fire(this.changedFiles);
-        }
-      }),
-      watcher.onDidCreate((uri) => {
-        if (this.shouldTrack(uri)) {
-          this.changedFiles.add(uri.fsPath);
-          this._onDidChangeTrackedFiles.fire(this.changedFiles);
-        }
-      }),
-      watcher.onDidDelete((uri) => {
-        if (this.shouldTrack(uri)) {
-          this.changedFiles.add(uri.fsPath);
-          this._onDidChangeTrackedFiles.fire(this.changedFiles);
-        }
-      }),
+      watcher.onDidChange((uri) => this.recordChange(uri)),
+      watcher.onDidCreate((uri) => this.recordChange(uri)),
+      watcher.onDidDelete((uri) => this.recordChange(uri)),
       watcher
     );
   }
 
+  private recordChange(uri: vscode.Uri): void {
+    if (!this.shouldTrack(uri)) {
+      return;
+    }
+    if (this.initializing) {
+      this.initializationChanges.add(uri.fsPath);
+      return;
+    }
+    if (this.tracking) {
+      this.changedFiles.add(uri.fsPath);
+      this._onDidChangeTrackedFiles.fire(this.changedFiles);
+    }
+  }
+
+  takeInitializationChanges(): Set<string> {
+    const changes = new Set(this.initializationChanges);
+    this.initializationChanges.clear();
+    return changes;
+  }
+
   stopTracking(): void {
     this.tracking = false;
+    this.initializing = false;
+    this.initializationChanges.clear();
     for (const d of this.disposables) {
       d.dispose();
     }
@@ -100,6 +119,10 @@ export class ChangeTracker implements vscode.Disposable {
 
   isTracking(): boolean {
     return this.tracking;
+  }
+
+  isInitializing(): boolean {
+    return this.initializing;
   }
 
   dispose(): void {

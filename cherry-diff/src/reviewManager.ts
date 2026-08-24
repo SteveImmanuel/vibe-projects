@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { BaselineService } from './baselineService';
+import type { BaselineSnapshot } from './baselineService';
 import { ChangeTracker } from './changeTracker';
 import { computeHunks, reconstructFile } from './diffService';
 import { FileReview, HunkStatus } from './types';
@@ -27,7 +28,16 @@ export class ReviewManager implements vscode.Disposable {
     for (const fsPath of changedFiles) {
       const uri = vscode.Uri.file(fsPath);
       const relativePath = vscode.workspace.asRelativePath(uri);
-      const baseline = this.baselineService.getSnapshot(fsPath);
+      let baseline: BaselineSnapshot | undefined;
+      try {
+        baseline = await this.baselineService.getSnapshot(fsPath);
+      } catch (error) {
+        console.error(`[Cherry Diff] Failed to load baseline for ${fsPath}`, error);
+        vscode.window.showErrorMessage(
+          `Cherry Diff: Failed to load the baseline for ${relativePath}.`
+        );
+        continue;
+      }
       const baselineContent = baseline?.content ?? '';
       const baselineExists = baseline?.exists ?? false;
 
@@ -91,13 +101,13 @@ export class ReviewManager implements vscode.Disposable {
     }
 
     if (hunk.kind !== 'content') {
-      review.baselineContent = review.currentContent;
-      review.baselineExists = review.currentExists;
-      this.baselineService.updateBaseline(
+      await this.baselineService.updateBaseline(
         fsPath,
         review.currentContent,
         review.currentExists
       );
+      review.baselineContent = review.currentContent;
+      review.baselineExists = review.currentExists;
       this.fileReviews.delete(fsPath);
       await this.autoSave(review.uri);
       this._onDidChangeReview.fire();
@@ -116,9 +126,13 @@ export class ReviewManager implements vscode.Disposable {
     }
 
     const newBaselineExists = newBaseline !== '' || review.currentExists;
+    await this.baselineService.updateBaseline(
+      fsPath,
+      newBaseline,
+      newBaselineExists
+    );
     review.baselineContent = newBaseline;
     review.baselineExists = newBaselineExists;
-    this.baselineService.updateBaseline(fsPath, newBaseline, newBaselineExists);
 
     const remainingHunks = computeHunks(
       review.relativePath,
@@ -185,7 +199,7 @@ export class ReviewManager implements vscode.Disposable {
 
       if (remainingHunks.length === 0) {
         this.fileReviews.delete(fsPath);
-        this.baselineService.updateBaseline(fsPath, newContent, newExists);
+        await this.baselineService.updateBaseline(fsPath, newContent, newExists);
       } else {
         review.hunks = remainingHunks;
       }
@@ -206,7 +220,7 @@ export class ReviewManager implements vscode.Disposable {
     if (status === 'accepted') {
       // Accept all: advance baseline to current content
       // If file was deleted (currentContent === ''), accepting means confirming deletion
-      this.baselineService.updateBaseline(
+      await this.baselineService.updateBaseline(
         fsPath,
         review.currentContent,
         review.currentExists
