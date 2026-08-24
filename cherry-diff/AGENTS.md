@@ -12,7 +12,7 @@ The core idea: instead of accepting or rejecting an entire file's changes at onc
 - **Marketplace-publishable** — uses only stable, public VS Code APIs (no proposed APIs)
 - **Non-invasive** — no inline editor UI (no CodeLens, no decorations). All review happens in a dedicated sidebar panel + VS Code's native diff editor
 
-## Current state (v0.3.1)
+## Current state (v0.3.2)
 
 Working MVP. Core features implemented:
 - Tracks file changes (create, modify, delete) with configurable include/exclude glob filters
@@ -26,7 +26,7 @@ Working MVP. Core features implemented:
 - Badge on the activity bar icon shows number of changed files
 - Auto-refreshes sidebar when files change (800ms debounce)
 - Hunk labels show only actual changed lines, not context (e.g. "line 42" for single-line, "lines 42-50" for multi-line)
-- Diff tabs auto-close when a file's review is complete; auto-opens next file if more remain
+- Diff tabs auto-close when a file's review is complete without auto-opening another file or stealing editor focus
 
 ## Project structure
 
@@ -214,7 +214,7 @@ Wiring and command registration. Notable details:
 - **Auto-refresh**: `changeTracker.onDidChangeTrackedFiles` → debounced 800ms → `reviewManager.startReview()` (skipped if `applying` flag is set)
 - **Badge**: `treeView.badge = { value: fileCount, tooltip: "..." }` or `undefined` when 0. Shows number of changed files (not hunks).
 - **Changed files sync**: On `onDidChangeReview`, files no longer in the review are removed from the changed files set (so the Controls panel count stays accurate)
-- **Diff tab lifecycle**: Tracks `previousReviewFiles` set. When a file is resolved (removed from review), its diff tab is closed via `closeDiffTab()`. If other files remain, the next file's diff is auto-opened.
+- **Diff tab lifecycle**: Tracks `previousReviewFiles` set. When a file is resolved (removed from review), its diff tab is closed via `closeDiffTab()`. Other files are never auto-opened, so background review updates do not steal editor focus.
 - **`closeDiffTab(fsPath)`**: Finds the diff tab by matching the label pattern `"relativePath (Baseline ↔ Current)"` and closes it via `vscode.window.tabGroups.close()`.
 - **Context keys**: `cherryDiff.tracking` (controls play/stop button visibility), `cherryDiff.reviewActive`
 - **`captureFilteredBaselines()`**: reads settings, calls `vscode.workspace.findFiles()` with include/exclude patterns, deduplicates, captures each file

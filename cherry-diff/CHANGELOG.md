@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.2]
+
+### Fixed
+- Background review updates no longer auto-open another diff or steal editor focus
+
 ## [0.3.1]
 
 ### Added
