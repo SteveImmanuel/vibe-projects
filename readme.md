@@ -16,3 +16,4 @@ Here are the current list of projects:
 |------|-------------------|-----|
 | [extradim](./extradim/) | Android app that applies a dimming overlay to reduce screen brightness below hardware minimum | Claude Opus 4.5 + Opus 4.8 |
 | [scrollmuch](./scrollmuch/) | Android app that tracks how much you scroll across all apps, measured in meters | Claude Opus 4.5 + Opus 4.8 |
+| [cherry-diff](./cherry-diff/) | VS Code extension for reviewing file edits one hunk at a time with per-hunk accept/reject | Claude Opus 4.8 + Fable 5 + GPT 5.6 Sol |
