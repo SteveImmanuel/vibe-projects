@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0]
+
+### Added
+- Explorer-style **Tracked Files** tree at the bottom of the Cherry Diff sidebar
+- File and directory checkboxes for visual include/exclude selection
+- Per-path overrides where the nearest selected directory or file takes precedence over glob filters
+- Reset File Selections action in the Tracked Files view title
+
+### Changed
+- Newly checked paths are baselined incrementally, while unchecked paths are removed from review and baseline storage
+- Explicitly checked paths can override both include and exclude glob patterns
+- The Filters control now focuses the Tracked Files tree instead of opening raw settings
+
 ## [0.4.0]
 
 ### Added

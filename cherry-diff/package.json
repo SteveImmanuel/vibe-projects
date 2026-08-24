@@ -2,7 +2,7 @@
   "name": "cherry-diff",
   "displayName": "Cherry Diff",
   "description": "Per-hunk approve/reject UI for file edits.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "cherry-diff",
   "license": "MIT",
   "icon": "assets/icon.png",
@@ -74,6 +74,14 @@
             "**/go.sum"
           ],
           "description": "Glob patterns for files/directories to exclude from tracking."
+        },
+        "cherryDiff.pathOverrides": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "description": "Per-file and per-directory include/exclude selections managed by the Tracked Files tree. Nearest selections override glob patterns."
         }
       }
     },
@@ -133,7 +141,7 @@
       },
       {
         "command": "cherryDiff.editFilters",
-        "title": "Edit Include/Exclude Filters",
+        "title": "Show Tracked Files",
         "icon": "$(filter)"
       },
       {
@@ -143,10 +151,21 @@
       {
         "command": "cherryDiff.prevHunk",
         "title": "Cherry Diff: Previous Hunk"
+      },
+      {
+        "command": "cherryDiff.clearPathOverrides",
+        "title": "Cherry Diff: Reset File Selections",
+        "icon": "$(clear-all)"
       }
     ],
     "menus": {
-      "view/title": [],
+      "view/title": [
+        {
+          "command": "cherryDiff.clearPathOverrides",
+          "when": "view == cherryDiffFilters",
+          "group": "navigation"
+        }
+      ],
       "view/item/context": [
         {
           "command": "cherryDiff.acceptHunk",
@@ -203,6 +222,11 @@
           "id": "cherryDiffReview",
           "name": "Review",
           "initialSize": 7
+        },
+        {
+          "id": "cherryDiffFilters",
+          "name": "Tracked Files",
+          "initialSize": 6
         }
       ]
     },
