@@ -14,7 +14,7 @@ Core principles:
 
 ## Current development state
 
-The latest committed version is `0.6.0`. The working tree additionally contains an uncommitted simplification pass: dead code, legacy migration paths, backward-compatibility shims, and duplicated primitives were removed without behavior changes.
+The latest committed version is `0.7.0`, a simplification pass over 0.6.0's safety hardening: dead code, legacy migration paths, backward-compatibility shims, and duplicated primitives were removed without behavior changes.
 
 Implemented behavior:
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.7.0]
 
 ### Changed
 - Review change events carry the affected resource URIs, so diff tabs, virtual diff documents, badges, and counters update from one precise event
