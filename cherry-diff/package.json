@@ -8,7 +8,8 @@
   "icon": "assets/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/SteveImmanuel/cherry-diff"
+    "url": "https://github.com/SteveImmanuel/vibe-projects",
+    "directory": "cherry-diff"
   },
   "engines": {
     "vscode": "^1.85.0"
