@@ -2,14 +2,25 @@ import * as vscode from 'vscode';
 import { BaselineService } from './baselineService';
 import { ChangeTracker } from './changeTracker';
 import { ReviewManager } from './reviewManager';
-import { ReviewTreeProvider, HunkTreeItem, FileTreeItem } from './reviewTreeProvider';
-import { BaselineContentProvider, CurrentContentProvider, openDiffForFile } from './baselineContentProvider';
+import {
+  ReviewTreeProvider,
+  HunkTreeItem,
+  FileTreeItem,
+  ReviewTreeItem,
+} from './reviewTreeProvider';
+import {
+  BaselineContentProvider,
+  CurrentContentProvider,
+  getReviewDocumentFsPath,
+  openDiffForFile,
+} from './baselineContentProvider';
 import { ControlsViewProvider } from './controlsViewProvider';
+import { getFirstChangedLine } from './diffService';
 
 let baselineService: BaselineService;
 let changeTracker: ChangeTracker;
 let reviewManager: ReviewManager;
-let treeView: vscode.TreeView<any>;
+let treeView: vscode.TreeView<ReviewTreeItem>;
 let reviewDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -52,7 +63,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
 
   // Auto-refresh: recompute diffs when files change (debounced, sidebar only)
-  changeTracker.onDidChangeTrackedFiles(() => {
+  const trackedFilesSubscription = changeTracker.onDidChangeTrackedFiles(() => {
     if (reviewManager.isApplying()) {
       return;
     }
@@ -68,7 +79,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Track which files are under review so we can close resolved diff tabs
   let previousReviewFiles = new Set<string>();
 
-  reviewManager.onDidChangeReview(async () => {
+  const reviewSubscription = reviewManager.onDidChangeReview(async () => {
     const currentReviewFiles = new Set(reviewManager.getAllFileReviews().keys());
 
     // Close diff tabs for resolved files, then open next file if any remain
@@ -96,6 +107,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         changeTracker.removeChangedFile(fsPath);
       }
     }
+    await vscode.commands.executeCommand(
+      'setContext',
+      'cherryDiff.reviewActive',
+      currentReviewFiles.size > 0
+    );
     updateBadge();
     controlsProvider.updateView();
   });
@@ -111,6 +127,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // Enable tracking
     vscode.commands.registerCommand('cherryDiff.enableTracking', async () => {
+      baselineService.clearBaselines();
       await captureFilteredBaselines(baselineService);
       changeTracker.startTracking();
       await vscode.commands.executeCommand('setContext', 'cherryDiff.tracking', true);
@@ -121,6 +138,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('cherryDiff.resetBaseline', async () => {
       reviewManager.clearReview();
       changeTracker.clearChangedFiles();
+      baselineService.clearBaselines();
       await captureFilteredBaselines(baselineService);
       updateBadge();
       controlsProvider.updateView();
@@ -128,6 +146,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // Disable tracking
     vscode.commands.registerCommand('cherryDiff.disableTracking', async () => {
+      if (reviewDebounceTimer) {
+        clearTimeout(reviewDebounceTimer);
+        reviewDebounceTimer = undefined;
+      }
       changeTracker.stopTracking();
       reviewManager.clearReview();
       baselineService.clearBaselines();
@@ -230,6 +252,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     baselineService,
     baselineContentProvider,
     currentContentProvider,
+    controlsProvider,
+    treeProvider,
+    trackedFilesSubscription,
+    reviewSubscription,
     changeTracker,
     reviewManager,
     treeView
@@ -247,7 +273,7 @@ async function captureFilteredBaselines(baselineService: BaselineService): Promi
     ? `{${excludes.join(',')}}`
     : undefined;
 
-  let allFiles: vscode.Uri[] = [];
+  const allFiles: vscode.Uri[] = [];
   for (const includePattern of includes) {
     const files = await vscode.workspace.findFiles(includePattern, excludePattern, 50000);
     allFiles.push(...files);
@@ -299,31 +325,35 @@ async function navigateHunk(direction: 'next' | 'prev'): Promise<void> {
 
   const editor = vscode.window.activeTextEditor;
   const currentLine = editor?.selection.active.line ?? 0;
-  const currentFile = editor?.document.uri.fsPath;
-
-  let target = direction === 'next' ? pending[0] : pending[pending.length - 1];
-
-  for (let i = 0; i < pending.length; i++) {
-    const h = pending[i];
-    const hunkLine = h.hunk.hunk.newStart - 1;
-
-    if (direction === 'next') {
-      if (h.fsPath === currentFile && hunkLine > currentLine) {
-        target = h;
-        break;
-      }
-      if (h.fsPath !== currentFile && target.fsPath === currentFile) {
-        target = h;
-        break;
-      }
-    } else {
-      if (h.fsPath === currentFile && hunkLine < currentLine) {
-        target = h;
-      }
-    }
+  let currentFile = editor?.document.uri.fsPath;
+  if (editor?.document.uri.scheme === 'cherry-diff-baseline'
+    || editor?.document.uri.scheme === 'cherry-diff-current') {
+    currentFile = getReviewDocumentFsPath(editor.document.uri);
   }
 
-  await openDiffForFile(target.fsPath, target.hunk.hunk.newStart - 1);
+  const indexesInCurrentFile = pending
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => entry.fsPath === currentFile);
+
+  let targetIndex: number;
+  if (indexesInCurrentFile.length === 0) {
+    targetIndex = direction === 'next' ? 0 : pending.length - 1;
+  } else if (direction === 'next') {
+    const laterHunk = indexesInCurrentFile.find(
+      ({ entry }) => getFirstChangedLine(entry.hunk.hunk) > currentLine
+    );
+    targetIndex = laterHunk?.index
+      ?? (indexesInCurrentFile[indexesInCurrentFile.length - 1].index + 1) % pending.length;
+  } else {
+    const earlierHunk = [...indexesInCurrentFile].reverse().find(
+      ({ entry }) => getFirstChangedLine(entry.hunk.hunk) < currentLine
+    );
+    targetIndex = earlierHunk?.index
+      ?? (indexesInCurrentFile[0].index - 1 + pending.length) % pending.length;
+  }
+
+  const target = pending[targetIndex];
+  await openDiffForFile(target.fsPath, getFirstChangedLine(target.hunk.hunk));
 }
 
 /**

@@ -1,79 +1,98 @@
 import * as vscode from 'vscode';
 import { ReviewManager } from './reviewManager';
 
-export class BaselineContentProvider implements vscode.TextDocumentContentProvider {
+export type ReviewDocumentScheme = 'cherry-diff-baseline' | 'cherry-diff-current';
+
+/** Build a portable virtual-document URI while retaining the source path. */
+export function createReviewDocumentUri(
+  scheme: ReviewDocumentScheme,
+  fsPath: string
+): vscode.Uri {
+  const fileUri = vscode.Uri.file(fsPath);
+  return vscode.Uri.from({
+    scheme,
+    path: fileUri.path,
+    query: encodeURIComponent(fsPath),
+  });
+}
+
+/** Recover the exact platform path embedded by createReviewDocumentUri. */
+export function getReviewDocumentFsPath(uri: vscode.Uri): string {
+  if (uri.query) {
+    try {
+      return decodeURIComponent(uri.query);
+    } catch {
+      // Fall through for malformed or legacy URIs.
+    }
+  }
+  return vscode.Uri.file(uri.path).fsPath;
+}
+
+export class BaselineContentProvider implements vscode.TextDocumentContentProvider, vscode.Disposable {
   private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
   readonly onDidChange = this._onDidChange.event;
+  private readonly reviewSubscription: vscode.Disposable;
 
   constructor(private reviewManager: ReviewManager) {
-    reviewManager.onDidChangeReview(() => {
+    this.reviewSubscription = reviewManager.onDidChangeReview(() => {
       for (const fsPath of reviewManager.getAllFileReviews().keys()) {
         this._onDidChange.fire(
-          vscode.Uri.parse(`cherry-diff-baseline:${fsPath}`)
+          createReviewDocumentUri('cherry-diff-baseline', fsPath)
         );
       }
     });
   }
 
   provideTextDocumentContent(uri: vscode.Uri): string {
-    const fsPath = uri.path;
-    const review = this.reviewManager.getFileReview(fsPath);
-    if (review) {
-      return review.baselineContent;
-    }
-    return '';
+    const review = this.reviewManager.getFileReview(getReviewDocumentFsPath(uri));
+    return review?.baselineContent ?? '';
   }
 
   dispose(): void {
+    this.reviewSubscription.dispose();
     this._onDidChange.dispose();
   }
 }
 
-/**
- * Virtual doc provider for showing the "current" content of deleted files.
- */
-export class CurrentContentProvider implements vscode.TextDocumentContentProvider {
+/** Virtual document provider for the current content of deleted files. */
+export class CurrentContentProvider implements vscode.TextDocumentContentProvider, vscode.Disposable {
   private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
   readonly onDidChange = this._onDidChange.event;
+  private readonly reviewSubscription: vscode.Disposable;
 
   constructor(private reviewManager: ReviewManager) {
-    reviewManager.onDidChangeReview(() => {
+    this.reviewSubscription = reviewManager.onDidChangeReview(() => {
       for (const fsPath of reviewManager.getAllFileReviews().keys()) {
         this._onDidChange.fire(
-          vscode.Uri.parse(`cherry-diff-current:${fsPath}`)
+          createReviewDocumentUri('cherry-diff-current', fsPath)
         );
       }
     });
   }
 
   provideTextDocumentContent(uri: vscode.Uri): string {
-    const fsPath = uri.path;
-    const review = this.reviewManager.getFileReview(fsPath);
-    if (review) {
-      return review.currentContent;
-    }
-    return '';
+    const review = this.reviewManager.getFileReview(getReviewDocumentFsPath(uri));
+    return review?.currentContent ?? '';
   }
 
   dispose(): void {
+    this.reviewSubscription.dispose();
     this._onDidChange.dispose();
   }
 }
 
 /**
  * Open a diff editor showing baseline (left) vs current (right).
- * Handles deleted files (current is empty) and new files (baseline is empty)
- * by using virtual documents for sides that don't exist on disk.
+ * Handles deleted files by using a virtual document on the right.
  */
 export async function openDiffForFile(
   fsPath: string,
   line?: number
 ): Promise<void> {
-  const baselineUri = vscode.Uri.parse(`cherry-diff-baseline:${fsPath}`);
+  const baselineUri = createReviewDocumentUri('cherry-diff-baseline', fsPath);
   const currentUri = vscode.Uri.file(fsPath);
   const relativePath = vscode.workspace.asRelativePath(currentUri);
 
-  // Check if the file exists on disk
   let fileExists = true;
   try {
     await vscode.workspace.fs.stat(currentUri);
@@ -81,13 +100,9 @@ export async function openDiffForFile(
     fileExists = false;
   }
 
-  let rightUri: vscode.Uri;
-  if (fileExists) {
-    rightUri = currentUri;
-  } else {
-    // Deleted file — use virtual document for the right side
-    rightUri = vscode.Uri.parse(`cherry-diff-current:${fsPath}`);
-  }
+  const rightUri = fileExists
+    ? currentUri
+    : createReviewDocumentUri('cherry-diff-current', fsPath);
 
   await vscode.commands.executeCommand(
     'vscode.diff',
@@ -100,7 +115,7 @@ export async function openDiffForFile(
     setTimeout(() => {
       const editor = vscode.window.activeTextEditor;
       if (editor) {
-        const pos = new vscode.Position(line, 0);
+        const pos = new vscode.Position(Math.max(0, line), 0);
         editor.selection = new vscode.Selection(pos, pos);
         editor.revealRange(
           new vscode.Range(pos, pos),

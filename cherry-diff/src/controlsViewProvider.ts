@@ -2,17 +2,20 @@ import * as vscode from 'vscode';
 import { ChangeTracker } from './changeTracker';
 import { ReviewManager } from './reviewManager';
 
-export class ControlsViewProvider implements vscode.WebviewViewProvider {
+export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   public static readonly viewType = 'cherryDiffControls';
 
   private _view?: vscode.WebviewView;
+  private readonly disposables: vscode.Disposable[];
 
   constructor(
     private changeTracker: ChangeTracker,
     private reviewManager: ReviewManager
   ) {
-    changeTracker.onDidChangeTrackedFiles(() => this.updateView());
-    reviewManager.onDidChangeReview(() => this.updateView());
+    this.disposables = [
+      changeTracker.onDidChangeTrackedFiles(() => this.updateView()),
+      reviewManager.onDidChangeReview(() => this.updateView()),
+    ];
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -22,7 +25,7 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider {
       enableScripts: true,
     };
 
-    webviewView.webview.onDidReceiveMessage((message) => {
+    this.disposables.push(webviewView.webview.onDidReceiveMessage((message) => {
       switch (message.command) {
         case 'startReview':
           vscode.commands.executeCommand('cherryDiff.startReview');
@@ -43,7 +46,7 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider {
           vscode.commands.executeCommand('cherryDiff.editFilters');
           break;
       }
-    });
+    }));
 
     this.updateView();
   }
@@ -58,6 +61,13 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider {
     const pendingHunks = this.reviewManager.getAllPendingHunks().length;
 
     this._view.webview.html = this.getHtml(isTracking, changedCount, pendingHunks);
+  }
+
+  dispose(): void {
+    for (const disposable of this.disposables) {
+      disposable.dispose();
+    }
+    this._view = undefined;
   }
 
   private getHtml(isTracking: boolean, changedCount: number, pendingHunks: number): string {
