@@ -34,6 +34,8 @@ Keyboard: `Alt+]` / `Alt+[` jump to the next / previous pending hunk while a rev
 
 Precedence: visual selection → exclude globs → include globs.
 
+By default, re-checking a directory does **not** re-include descendants that match `excludePaths` — unchecking and re-checking `src/` won't suddenly track `node_modules` or minified assets beneath it. Explicitly checking an individual file always includes it. Set `cherryDiff.checkedDirectoriesOverrideExcludes` to `true` if you want a checked directory to select everything beneath it unconditionally.
+
 ## Settings
 
 | Setting | Default | Description |
@@ -42,6 +44,7 @@ Precedence: visual selection → exclude globs → include globs.
 | `cherryDiff.baselineCaptureConcurrency` | `12` | Concurrent file reads while baselines are prepared (1–64) |
 | `cherryDiff.includePaths` | `["**/*"]` | Glob patterns for files to track |
 | `cherryDiff.excludePaths` | 27 defaults | Glob patterns for files to exclude |
+| `cherryDiff.checkedDirectoriesOverrideExcludes` | `false` | Whether checking a directory re-includes even `excludePaths` matches beneath it |
 
 ## Limitations
 

@@ -30,6 +30,7 @@ export class FilterService implements vscode.Disposable {
   private excludes: string[] = [];
   private includeMatchers: Minimatch[] = [];
   private excludeMatchers: Minimatch[] = [];
+  private checkedDirectoriesOverrideExcludes = false;
   private readonly overrideUpdates = new SerialQueue();
   private readonly _onDidChange = new vscode.EventEmitter<FilterChangeKind>();
   readonly onDidChange = this._onDidChange.event;
@@ -44,8 +45,12 @@ export class FilterService implements vscode.Disposable {
     }
 
     this.configurationSubscription = vscode.workspace.onDidChangeConfiguration((event) => {
-      if (!event.affectsConfiguration('cherryDiff.includePaths')
-        && !event.affectsConfiguration('cherryDiff.excludePaths')) {
+      const affected = [
+        'cherryDiff.includePaths',
+        'cherryDiff.excludePaths',
+        'cherryDiff.checkedDirectoriesOverrideExcludes',
+      ].some((setting) => event.affectsConfiguration(setting));
+      if (!affected) {
         return;
       }
       this.refreshPatterns();
@@ -63,8 +68,18 @@ export class FilterService implements vscode.Disposable {
       ? `${location.path ? `${location.path}/` : ''}__cherry_diff_descendant__`
       : location.path;
     const override = this.getNearestOverride(location.root, pathToMatch);
-    if (override !== undefined) {
-      return override;
+    if (override) {
+      if (!override.included) {
+        return false;
+      }
+      // A checked file is a deliberate inclusion of that exact path. A checked
+      // ancestor directory re-includes its subtree, but by default it does not
+      // pull back in paths that excludePaths deliberately filters out.
+      if (this.checkedDirectoriesOverrideExcludes
+        || (!asDirectory && override.path === location.path)) {
+        return true;
+      }
+      return !this.excludeMatchers.some((matcher) => matcher.match(pathToMatch));
     }
     if (this.excludeMatchers.some((matcher) => matcher.match(pathToMatch))) {
       return false;
@@ -171,6 +186,10 @@ export class FilterService implements vscode.Disposable {
     const config = vscode.workspace.getConfiguration('cherryDiff');
     this.includes = config.get<string[]>('includePaths', ['**/*']);
     this.excludes = config.get<string[]>('excludePaths', []);
+    this.checkedDirectoriesOverrideExcludes = config.get<boolean>(
+      'checkedDirectoriesOverrideExcludes',
+      false
+    );
     this.includeMatchers = this.includes.map(
       (pattern) => new Minimatch(normalizeFilterPath(pattern), FILTER_MATCH_OPTIONS)
     );
@@ -179,12 +198,12 @@ export class FilterService implements vscode.Disposable {
     );
   }
 
-  private getNearestOverride(root: string, relativePath: string): boolean | undefined {
+  private getNearestOverride(root: string, relativePath: string): StoredPathOverride | undefined {
     let candidate: string | undefined = normalizeFilterPath(relativePath);
     while (candidate !== undefined) {
       const override = this.overrides.get(getOverrideKey(root, candidate));
       if (override) {
-        return override.included;
+        return override;
       }
       if (!candidate) {
         candidate = undefined;

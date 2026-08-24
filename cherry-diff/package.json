@@ -80,6 +80,11 @@
             "**/go.sum"
           ],
           "description": "Glob patterns for files/directories to exclude from tracking."
+        },
+        "cherryDiff.checkedDirectoriesOverrideExcludes": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, checking a directory in Tracked Files re-includes everything beneath it, even paths matching excludePaths. When disabled, excludePaths still applies beneath checked directories; explicitly checking a file always includes it."
         }
       }
     },

@@ -42,6 +42,7 @@ const roots = [
 const configuration = {
   includePaths: ['**/*'],
   excludePaths: ['**/generated/**'],
+  checkedDirectoriesOverrideExcludes: false,
 };
 
 const fakeVscode = {
@@ -72,10 +73,10 @@ Module._load = function patchedLoad(request, parent, isMain) {
 const { FilterService } = require('../out/filterService');
 Module._load = originalLoad;
 
-test('visual overrides beat glob filters and are scoped to one workspace root', async () => {
+test('checked directories can override glob excludes when configured', async () => {
+  configuration.checkedDirectoriesOverrideExcludes = true;
   const service = new FilterService(new FakeMemento());
 
-  // Exclude globs apply until an override re-includes the path.
   assert.equal(service.isIncluded(FakeUri.file('/one/generated/app.ts')), false);
   await service.updateOverrides([{
     uri: FakeUri.file('/one/generated'),
@@ -96,7 +97,40 @@ test('visual overrides beat glob filters and are scoped to one workspace root', 
   service.dispose();
 });
 
+test('checked directories keep glob excludes applied by default', async () => {
+  configuration.checkedDirectoriesOverrideExcludes = false;
+  const service = new FilterService(new FakeMemento());
+
+  // Re-checking a directory restores its subtree without the excluded paths.
+  await service.updateOverrides([
+    { uri: FakeUri.file('/one/src'), included: false, recursive: true },
+  ]);
+  await service.updateOverrides([
+    { uri: FakeUri.file('/one/src'), included: true, recursive: true },
+  ]);
+  assert.equal(service.isIncluded(FakeUri.file('/one/src/app.ts')), true);
+  assert.equal(service.isIncluded(FakeUri.file('/one/src/generated/api.ts')), false);
+  assert.equal(service.isIncluded(FakeUri.file('/one/src/generated'), true), false);
+
+  // Unchecking still excludes everything beneath the directory.
+  await service.updateOverrides([
+    { uri: FakeUri.file('/one/src'), included: false, recursive: true },
+  ]);
+  assert.equal(service.isIncluded(FakeUri.file('/one/src/app.ts')), false);
+
+  // Explicitly checking one file is a deliberate inclusion that beats excludes.
+  await service.updateOverrides([{
+    uri: FakeUri.file('/one/src/generated/api.ts'),
+    included: true,
+    recursive: false,
+  }]);
+  assert.equal(service.isIncluded(FakeUri.file('/one/src/generated/api.ts')), true);
+  assert.equal(service.isIncluded(FakeUri.file('/one/src/generated/other.ts')), false);
+  service.dispose();
+});
+
 test('overrides persist through workspace state', async () => {
+  configuration.checkedDirectoriesOverrideExcludes = false;
   const memento = new FakeMemento();
   const first = new FilterService(memento);
   await first.updateOverrides([{

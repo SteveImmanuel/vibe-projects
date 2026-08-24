@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `cherryDiff.checkedDirectoriesOverrideExcludes` setting to control whether checking a directory in Tracked Files re-includes descendants matching `excludePaths`
+
+### Changed
+- Re-checking a directory now leaves `excludePaths` matches excluded by default; explicitly checked files are still always included
+
 ## [0.7.0]
 
 ### Changed

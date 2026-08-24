@@ -123,6 +123,8 @@ Filter precedence is:
 2. `cherryDiff.excludePaths`
 3. `cherryDiff.includePaths`
 
+An unchecked override always excludes its subtree. A checked override includes it, with one refinement: by default (`cherryDiff.checkedDirectoriesOverrideExcludes` = `false`) a checked ancestor directory does not re-include descendants matching `cherryDiff.excludePaths`, so re-checking a directory cannot drag in `node_modules`-style noise. An override on the exact file being tested is always a deliberate inclusion and beats excludes. Enabling the setting restores unconditional subtree inclusion.
+
 Glob patterns are compiled once with `minimatch`; brace expansion, character classes, `**`, `*`, and `?` share one matcher implementation.
 
 Visual selections are stored in `ExtensionContext.workspaceState`, not `.vscode/settings.json`. This prevents checkbox use from modifying the repository or creating a Cherry Diff review for its own setting change.
@@ -199,6 +201,7 @@ Binary and whole-file fallback reviews do not open a potentially expensive or lo
 | `cherryDiff.baselineCaptureConcurrency` | integer | `12` | Concurrent captures, clamped to 1–64 |
 | `cherryDiff.includePaths` | string[] | `["**/*"]` | Default included paths |
 | `cherryDiff.excludePaths` | string[] | 27 defaults | Default excluded paths |
+| `cherryDiff.checkedDirectoriesOverrideExcludes` | boolean | `false` | Checked directories re-include even `excludePaths` matches |
 
 Visual path selections are internal workspace state, not a public configuration setting.
 
