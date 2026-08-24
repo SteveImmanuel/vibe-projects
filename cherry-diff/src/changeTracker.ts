@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { globMatch } from './glob';
 
 /**
  * Tracks files modified in the workspace, filtered by include/exclude globs.
@@ -70,62 +71,19 @@ export class ChangeTracker implements vscode.Disposable {
     const excludes: string[] = config.get('excludePaths', []);
 
     for (const pattern of excludes) {
-      if (this.globMatch(relativePath, pattern)) {
+      if (globMatch(relativePath, pattern)) {
         return false;
       }
     }
 
     const includes: string[] = config.get('includePaths', ['**/*']);
     for (const pattern of includes) {
-      if (this.globMatch(relativePath, pattern)) {
+      if (globMatch(relativePath, pattern)) {
         return true;
       }
     }
 
     return false;
-  }
-
-  /**
-   * Glob matching that correctly handles **, *, and ? patterns.
-   *
-   * **  = matches any number of path segments (including zero)
-   * *   = matches anything except /
-   * ?   = matches a single char except /
-   */
-  private globMatch(filepath: string, pattern: string): boolean {
-    // Escape regex special chars, then convert glob tokens
-    let regex = '';
-    let i = 0;
-    while (i < pattern.length) {
-      if (pattern[i] === '*' && pattern[i + 1] === '*') {
-        if (pattern[i + 2] === '/') {
-          // **/ = zero or more path segments
-          regex += '(.+/|)';
-          i += 3;
-        } else {
-          // ** at end = match everything remaining
-          regex += '.*';
-          i += 2;
-        }
-      } else if (pattern[i] === '*') {
-        regex += '[^/]*';
-        i++;
-      } else if (pattern[i] === '?') {
-        regex += '[^/]';
-        i++;
-      } else if ('.+^${}()|[]\\'.includes(pattern[i])) {
-        regex += '\\' + pattern[i];
-        i++;
-      } else {
-        regex += pattern[i];
-        i++;
-      }
-    }
-    try {
-      return new RegExp(`^${regex}$`).test(filepath);
-    } catch {
-      return false;
-    }
   }
 
   getChangedFiles(): Set<string> {
