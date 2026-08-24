@@ -12,12 +12,12 @@ The core idea: instead of accepting or rejecting an entire file's changes at onc
 - **Marketplace-publishable** — uses only stable, public VS Code APIs (no proposed APIs)
 - **Non-invasive** — no inline editor UI (no CodeLens, no decorations). All review happens in a dedicated sidebar panel + VS Code's native diff editor
 
-## Current state (v0.5.1)
+## Current state (v0.5.2)
 
 Working MVP. Core features implemented:
 - Tracks file changes (create, modify, delete) with configurable include/exclude glob filters
 - Computes per-hunk diffs using the `diff` npm package
-- **Controls panel** (WebviewView) with buttons: Refresh, Stop Tracking, Accept All (green), Reject All (red), Filters
+- **Controls panel** (WebviewView) with Stop Tracking and bulk Accept/Reject buttons; manual Refresh lives in the Review view title
 - **Review panel** (TreeView) shows files and their hunks with inline Accept/Reject buttons
 - **Tracked Files panel** provides an Explorer-style workspace tree with include/exclude checkboxes
 - Clicking a hunk opens VS Code's native diff editor (baseline vs current) scrolled to the relevant line
@@ -69,7 +69,7 @@ cherry-diff/
 1. `activate()` in `extension.ts` runs on `onStartupFinished`
 2. `BaselineService` is created with a session directory under `ExtensionContext.storageUri`
 3. `ChangeTracker.beginInitialization()` installs text-document and filesystem watchers before capture starts
-4. `captureFilteredBaselines()` finds included files and snapshots up to 12 concurrently as SHA-256-addressed blobs
+4. `captureFilteredBaselines()` finds included files and snapshots them as SHA-256-addressed blobs using the configured concurrency (default 12)
 5. Changes observed during capture are drained and recaptured; `finishInitialization()` then switches the existing watchers to normal tracking
 6. Virtual document providers, the Controls WebviewView, and Review TreeView are registered
 7. Commands and event listeners are wired up
@@ -194,8 +194,8 @@ Central orchestrator. Key behaviors:
 WebviewView that renders the **Controls** section at the top of the Cherry Diff sidebar. Uses HTML/CSS with VS Code theme variables for native look. Shows:
 - **Status line**: "Tracking active · N files changed · M hunks pending"
 - **Row 1**: Stop Tracking (full width, dark red) — or Start Tracking when disabled
-- **Row 2**: Refresh (primary) + Filters (secondary)
-- **Row 3**: Accept All (green) + Reject All (red)
+- **Row 2**: Accept All (green) + Reject All (red), disabled when there are no changed files or pending hunks
+- **Review title**: compact Refresh action; file selection is available directly in the Tracked Files panel
 
 All buttons have tooltip text on hover. Communicates with extension.ts via `webviewView.webview.onDidReceiveMessage()`. The view updates when tracking state, changed files, or review state changes.
 
@@ -232,10 +232,10 @@ Wiring and command registration. Notable details:
 ### Commands
 | Command ID | Title | Icon | Where it appears |
 |---|---|---|---|
-| `cherryDiff.startReview` | Start Review | `$(refresh)` | Controls webview |
+| `cherryDiff.startReview` | Start Review | `$(refresh)` | Review view title |
 | `cherryDiff.enableTracking` | Enable Tracking | `$(play)` | Controls webview |
 | `cherryDiff.disableTracking` | Disable Tracking | `$(debug-stop)` | Controls webview |
-| `cherryDiff.editFilters` | Show Tracked Files | `$(filter)` | Controls webview |
+| `cherryDiff.editFilters` | Show Tracked Files | `$(filter)` | Command palette |
 | `cherryDiff.acceptHunk` | Accept Hunk | `$(check)` | Hunk item inline |
 | `cherryDiff.rejectHunk` | Reject Hunk | `$(x)` | Hunk item inline |
 | `cherryDiff.acceptAllFile` | Accept All in File | `$(check-all)` | File item inline |
@@ -251,6 +251,7 @@ Wiring and command registration. Notable details:
 | Setting | Type | Default | Description |
 |---|---|---|---|
 | `cherryDiff.autoSave` | `boolean` | `true` | Auto-save files after accept/reject |
+| `cherryDiff.baselineCaptureConcurrency` | `integer` | `12` | Concurrent baseline captures (range 1–64) |
 | `cherryDiff.includePaths` | `string[]` | `["**/*"]` | Glob patterns to include |
 | `cherryDiff.excludePaths` | `string[]` | (27 patterns) | Glob patterns to exclude |
 | `cherryDiff.pathOverrides` | `object` | `{}` | Per-path checkbox selections managed by the Tracked Files tree |
@@ -287,7 +288,6 @@ The baseline is **the file's content at the moment tracking was enabled** (exten
 6. **No rename detection** — file renames show up as a delete + create, not a rename.
 7. **Global hunk counter** — `nextHunkId` never resets, could overflow in very long sessions (unlikely in practice).
 8. **Single-repo assumption** — `ChangeTracker` doesn't scope to specific workspace folders.
-9. **Controls panel size** — the WebviewView `initialSize` is set to 1, but VS Code may not always respect this; the user might need to resize manually.
 
 ## Development
 

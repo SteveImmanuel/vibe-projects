@@ -2,7 +2,7 @@
   "name": "cherry-diff",
   "displayName": "Cherry Diff",
   "description": "Per-hunk approve/reject UI for file edits.",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "publisher": "cherry-diff",
   "license": "MIT",
   "icon": "assets/icon.png",
@@ -28,6 +28,13 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically save files after accepting or rejecting hunks."
+        },
+        "cherryDiff.baselineCaptureConcurrency": {
+          "type": "integer",
+          "default": 12,
+          "minimum": 1,
+          "maximum": 64,
+          "description": "Maximum number of files captured concurrently while preparing or extending baselines."
         },
         "cherryDiff.includePaths": {
           "type": "array",
@@ -155,6 +162,11 @@
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "cherryDiff.startReview",
+          "when": "view == cherryDiffReview",
+          "group": "navigation"
+        },
         {
           "command": "cherryDiff.clearPathOverrides",
           "when": "view == cherryDiffFilters",

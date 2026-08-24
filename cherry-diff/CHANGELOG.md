@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.2]
+
+### Added
+- `cherryDiff.baselineCaptureConcurrency` setting, configurable from 1 to 64 with a default of 12
+
+### Changed
+- Removed redundant Refresh and Filters buttons from Controls
+- Moved Refresh to the Review view title and disabled bulk actions when nothing is pending
+- Removed ellipsis suffixes from baseline preparation status labels
+
 ## [0.5.1]
 
 ### Changed
