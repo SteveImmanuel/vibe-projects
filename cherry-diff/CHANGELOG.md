@@ -2,6 +2,20 @@
 
 ## [0.3.1]
 
+### Added
+- Automated tests for diff reconstruction, empty-file existence changes, and glob matching
+- Working ESLint configuration for TypeScript sources
+
+### Fixed
+- Empty files are now tracked separately from missing files, so creation, deletion, and rejection preserve the correct file state
+- Accepting a hunk now honors the `cherryDiff.autoSave` setting
+- Resetting or re-enabling tracking clears stale baseline entries before recapturing files
+- Next/previous hunk navigation now moves consistently within and across files
+- Virtual diff document URIs now preserve file paths portably on Windows and Unix
+- Event subscriptions owned by view and content providers are now disposed correctly
+- The `cherryDiff.reviewActive` context key now updates when reviews change
+- Package version now matches the changelog version
+
 ### Changed
 - Removed dead code: `classifyHunkLines`, `getHunkCurrentRange` from diffService
 - Simplified `writeFileContent` by merging duplicate empty-content branches and removing unused parameter
