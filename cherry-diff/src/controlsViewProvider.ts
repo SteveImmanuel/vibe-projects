@@ -27,9 +27,6 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.
 
     this.disposables.push(webviewView.webview.onDidReceiveMessage((message) => {
       switch (message.command) {
-        case 'startReview':
-          vscode.commands.executeCommand('cherryDiff.startReview');
-          break;
         case 'enableTracking':
           vscode.commands.executeCommand('cherryDiff.enableTracking');
           break;
@@ -41,9 +38,6 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.
           break;
         case 'rejectAll':
           vscode.commands.executeCommand('cherryDiff.rejectAll');
-          break;
-        case 'editFilters':
-          vscode.commands.executeCommand('cherryDiff.editFilters');
           break;
       }
     }));
@@ -83,13 +77,16 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.
     pendingHunks: number
   ): string {
     const trackingStatus = isInitializing
-      ? 'Preparing disk-backed baselines&hellip;'
+      ? 'Preparing disk-backed baselines'
       : isTracking
         ? `Tracking active &middot; ${changedCount} file${changedCount !== 1 ? 's' : ''} changed`
         : 'Tracking disabled';
 
     const pendingStatus = pendingHunks > 0
       ? `${pendingHunks} hunk${pendingHunks !== 1 ? 's' : ''} pending`
+      : '';
+    const bulkActionsDisabled = changedCount === 0 && pendingHunks === 0
+      ? ' disabled'
       : '';
 
     return /* html */ `<!DOCTYPE html>
@@ -180,7 +177,7 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.
   ${isInitializing
     ? `
   <div class="btn-row">
-    <button class="btn-secondary" disabled>Preparing baselines&hellip;</button>
+    <button class="btn-secondary" disabled>Preparing baselines</button>
   </div>`
     : isTracking
     ? `
@@ -188,12 +185,8 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.
     <button class="btn-danger" onclick="send('disableTracking')" title="Stop watching for file changes and clear all baselines">Stop Tracking</button>
   </div>
   <div class="btn-row">
-    <button class="btn-primary" onclick="send('startReview')" title="Check for new file changes and update the review list">Refresh</button>
-    <button class="btn-secondary" onclick="send('editFilters')" title="Open the Tracked Files tree to include or exclude files visually">Filters</button>
-  </div>
-  <div class="btn-row">
-    <button class="btn-accept" onclick="send('acceptAll')" title="Accept all pending changes without rebuilding unchanged file baselines">Accept All</button>
-    <button class="btn-reject" onclick="send('rejectAll')" title="Reject all pending changes and revert files to their baseline state">Reject All</button>
+    <button class="btn-accept" onclick="send('acceptAll')" title="Accept all pending changes without rebuilding unchanged file baselines"${bulkActionsDisabled}>Accept All</button>
+    <button class="btn-reject" onclick="send('rejectAll')" title="Reject all pending changes and revert files to their baseline state"${bulkActionsDisabled}>Reject All</button>
   </div>`
     : `
   <div class="btn-row">

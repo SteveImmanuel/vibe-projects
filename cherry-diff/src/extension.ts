@@ -19,6 +19,9 @@ import { FilterTreeItem, FilterTreeProvider } from './filterTreeProvider';
 import { clearPathOverrides, isUriIncluded, PathOverrides } from './filterService';
 import { getFirstChangedLine } from './diffService';
 
+const DEFAULT_BASELINE_CAPTURE_CONCURRENCY = 12;
+const MAX_BASELINE_CAPTURE_CONCURRENCY = 64;
+
 let baselineService: BaselineService;
 let changeTracker: ChangeTracker;
 let reviewManager: ReviewManager;
@@ -559,7 +562,7 @@ async function captureFilteredBaselines(
     ? `{${excludes.join(',')}}`
     : undefined;
 
-  progress.report({ message: 'Finding included files…' });
+  progress.report({ message: 'Finding included files' });
   const allFiles: vscode.Uri[] = [];
   for (const includePattern of includes) {
     if (isCancelled()) {
@@ -615,7 +618,20 @@ async function captureBaselinePaths(
   const unstablePaths = new Set<string>();
   let nextIndex = 0;
   let completed = 0;
-  const workerCount = Math.min(12, uris.length);
+  const configuredConcurrency = vscode.workspace
+    .getConfiguration('cherryDiff')
+    .get<number>(
+      'baselineCaptureConcurrency',
+      DEFAULT_BASELINE_CAPTURE_CONCURRENCY
+    );
+  const normalizedConcurrency = Number.isFinite(configuredConcurrency)
+    ? Math.floor(configuredConcurrency)
+    : DEFAULT_BASELINE_CAPTURE_CONCURRENCY;
+  const captureConcurrency = Math.min(
+    MAX_BASELINE_CAPTURE_CONCURRENCY,
+    Math.max(1, normalizedConcurrency)
+  );
+  const workerCount = Math.min(captureConcurrency, uris.length);
 
   const worker = async (): Promise<void> => {
     while (!isCancelled()) {
