@@ -84,18 +84,3 @@ test('clears dirty resources when tracking stops', () => {
   tracker.dispose();
 });
 
-test('removes one URI subtree without affecting a sibling', () => {
-  const tracker = new ChangeTracker(filters);
-  tracker.beginInitialization();
-  tracker.finishInitialization();
-  tracker.markChange(FakeUri.parse('file:///workspace/src/a.ts'));
-  tracker.markChange(FakeUri.parse('file:///workspace/src/nested/b.ts'));
-  tracker.markChange(FakeUri.parse('file:///workspace/test/c.ts'));
-
-  tracker.removeChange(FakeUri.parse('file:///workspace/src'), true);
-  assert.deepEqual(
-    tracker.getChanges().map((change) => change.uri.path),
-    ['/workspace/test/c.ts']
-  );
-  tracker.dispose();
-});

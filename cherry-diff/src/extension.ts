@@ -25,14 +25,13 @@ import {
   ReviewTreeItem,
   ReviewTreeProvider,
 } from './reviewTreeProvider';
-import { TrackingController } from './trackingController';
+import { getErrorMessage, TrackingController } from './trackingController';
 
 let activeController: TrackingController | undefined;
 let reviewTreeView: vscode.TreeView<ReviewTreeItem> | undefined;
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+export function activate(context: vscode.ExtensionContext): void {
   const filters = new FilterService(context.workspaceState);
-  await filters.initialize();
 
   const storageRoot = context.storageUri ?? context.globalStorageUri;
   const sessionStorageUri = vscode.Uri.joinPath(
@@ -105,17 +104,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
-  let previousReviews = new Map<string, vscode.Uri>();
-  const reviewSubscription = reviews.onDidChangeReview(() => {
-    const currentReviews = new Map(
-      [...reviews.getAllFileReviews()].map(([key, review]) => [key, review.uri])
-    );
-    const resolvedUris = [...previousReviews]
-      .filter(([key]) => !currentReviews.has(key))
-      .map(([, uri]) => uri);
-    previousReviews = currentReviews;
-
-    void closeResolvedDiffTabs(resolvedUris).catch((error) => {
+  const reviewSubscription = reviews.onDidChangeReview((event) => {
+    void closeResolvedDiffTabs(event.removed).catch((error) => {
       console.error('[Cherry Diff] Failed to close resolved diff tabs', error);
     });
     updateContextKeys(controller, reviews);
@@ -160,9 +150,6 @@ function registerCommands(
     )),
     vscode.commands.registerCommand('cherryDiff.disableTracking', () => (
       safely('stop tracking', () => controller.stopTracking())
-    )),
-    vscode.commands.registerCommand('cherryDiff.resetBaseline', () => (
-      safely('accept all changes', () => controller.resolveAll('accepted'))
     )),
     vscode.commands.registerCommand(
       'cherryDiff.openDiff',
@@ -279,12 +266,7 @@ function resolveReview(
     return reviews.getFileReview(input.resourceKey);
   }
   if (typeof input === 'string') {
-    const direct = reviews.getFileReview(input);
-    if (direct) {
-      return direct;
-    }
-    const legacyKey = vscode.Uri.file(input).toString();
-    return reviews.getFileReview(legacyKey);
+    return reviews.getFileReview(input);
   }
 
   const editorUri = vscode.window.activeTextEditor?.document.uri;
@@ -338,15 +320,15 @@ async function navigateHunk(
 }
 
 async function closeResolvedDiffTabs(uris: readonly vscode.Uri[]): Promise<void> {
+  if (uris.length === 0) {
+    return;
+  }
   const expectedOriginals = new Set(
     uris.map((uri) => createReviewDocumentUri(
       BASELINE_DOCUMENT_SCHEME,
       uri
     ).toString())
   );
-  if (expectedOriginals.size === 0) {
-    return;
-  }
 
   const tabs: vscode.Tab[] = [];
   for (const group of vscode.window.tabGroups.all) {
@@ -409,7 +391,7 @@ async function safely<T>(
   } catch (error) {
     console.error(`[Cherry Diff] Failed to ${action}`, error);
     vscode.window.showErrorMessage(
-      `Cherry Diff: Failed to ${action}. ${error instanceof Error ? error.message : String(error)}`
+      `Cherry Diff: Failed to ${action}. ${getErrorMessage(error)}`
     );
     return undefined;
   }
@@ -421,7 +403,7 @@ export async function deactivate(): Promise<void> {
   reviewTreeView = undefined;
   if (controller) {
     try {
-      await controller.shutdown();
+      await controller.stopTracking();
     } catch (error) {
       console.error('[Cherry Diff] Failed to remove session baselines', error);
     }

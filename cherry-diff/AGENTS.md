@@ -14,7 +14,7 @@ Core principles:
 
 ## Current development state
 
-The latest committed version is `0.5.3`. The working implementation after that version includes a broad safety and architecture cleanup that is not yet versioned or committed.
+The latest committed version is `0.6.0`. The working tree additionally contains an uncommitted simplification pass: dead code, legacy migration paths, backward-compatibility shims, and duplicated primitives were removed without behavior changes.
 
 Implemented behavior:
 
@@ -37,6 +37,7 @@ Implemented behavior:
 src/
 ├── extension.ts                Activation, views, commands, context keys
 ├── constants.ts                Shared operational constants
+├── async.ts                    Shared SerialQueue and Debouncer primitives
 ├── trackingController.ts       Serialized tracking-session lifecycle
 ├── baselineCaptureService.ts   Discovery, traversal, capture workers, retries
 ├── baselineService.ts          Disk-backed snapshot index and blob storage
@@ -49,7 +50,6 @@ src/
 ├── reviewTreeProvider.ts       Review TreeView items
 ├── baselineContentProvider.ts  Virtual diff documents and diff opening
 ├── controlsViewProvider.ts     Controls WebviewView
-├── glob.ts                     Shared minimatch wrapper
 └── types.ts                    Review domain types
 
 test/
@@ -58,7 +58,6 @@ test/
 ├── changeTracker.test.js
 ├── diffService.test.js
 ├── filterService.test.js
-├── glob.test.js
 └── reviewManager.test.js
 ```
 
@@ -221,8 +220,6 @@ Important commands:
 - `cherryDiff.acceptAll` / `cherryDiff.rejectAll`
 - `cherryDiff.clearPathOverrides`
 - `cherryDiff.nextHunk` / `cherryDiff.prevHunk`
-
-`cherryDiff.resetBaseline` remains a hidden compatibility alias for Accept All.
 
 ## Remaining limitations
 

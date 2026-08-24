@@ -170,7 +170,8 @@ test('stores path-addressed baselines on disk and loads them lazily', async () =
   await service.updateBaseline(a, textFileSnapshot('accepted content'));
   assert.equal((await service.getSnapshot(a)).text, 'accepted content');
 
-  service.removeBaseline(FakeUri.file('/workspace'), true);
+  service.removeBaseline(a);
+  service.removeBaseline(b);
   assert.equal(service.getBaselineCount(), 0);
 });
 

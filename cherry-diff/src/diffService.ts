@@ -31,9 +31,7 @@ function generateHunkId(
 export function computeHunks(
   relativePath: string,
   baselineContent: string,
-  currentContent: string,
-  baselineExists = true,
-  currentExists = true
+  currentContent: string
 ): HunkReview[] | undefined {
   const patch = structuredPatch(
     relativePath,
@@ -53,25 +51,6 @@ export function computeHunks(
     hunk,
     kind: 'content',
   }));
-
-  // An empty file creation/deletion has no textual diff. Represent the
-  // existence change as a synthetic hunk so it can still be reviewed.
-  if (hunks.length === 0 && baselineExists !== currentExists) {
-    const kind = currentExists ? 'file-created' : 'file-deleted';
-    const hunk: StructuredPatchHunk = {
-      oldStart: 1,
-      oldLines: 0,
-      newStart: 1,
-      newLines: 0,
-      lines: [],
-    };
-    hunks.push({
-      id: generateHunkId(kind, hunk, 0),
-      hunk,
-      kind,
-    });
-  }
-
   return hunks;
 }
 
@@ -125,14 +104,10 @@ export function getFirstChangedLine(hunk: StructuredPatchHunk): number {
 
   for (const line of hunk.lines) {
     const prefix = line[0];
-    if (prefix === '+') {
+    if (prefix === '+' || prefix === '-') {
       return currentLine;
-    } else if (prefix === '-') {
-      // Deleted line — this position is where the deletion happened
-      return currentLine;
-    } else {
-      currentLine++;
     }
+    currentLine++;
   }
 
   return hunk.newStart - 1;

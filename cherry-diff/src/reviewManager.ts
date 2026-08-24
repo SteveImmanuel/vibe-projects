@@ -4,6 +4,7 @@ import { MAX_TEXT_DIFF_BYTES } from './constants';
 import { ChangeTracker } from './changeTracker';
 import { computeHunks, createSyntheticHunk, reconstructFile } from './diffService';
 import {
+  bytesEqual,
   FileSnapshot,
   isFileNotFound,
   missingFileSnapshot,
@@ -11,12 +12,12 @@ import {
   snapshotsEqual,
   textFileSnapshot,
 } from './fileSnapshot';
-import type { FileReview, HunkReview, Resolution } from './types';
+import type { FileReview, HunkReview, Resolution, ReviewChangeEvent } from './types';
 
 export class ReviewManager implements vscode.Disposable {
   private readonly fileReviews = new Map<string, FileReview>();
   private readonly reportedReadErrors = new Set<string>();
-  private readonly _onDidChangeReview = new vscode.EventEmitter<void>();
+  private readonly _onDidChangeReview = new vscode.EventEmitter<ReviewChangeEvent>();
   readonly onDidChangeReview = this._onDidChangeReview.event;
 
   constructor(
@@ -30,12 +31,16 @@ export class ReviewManager implements vscode.Disposable {
       return this.getPendingHunks().length;
     }
 
-    let changed = false;
+    const changed: vscode.Uri[] = [];
+    const removed: vscode.Uri[] = [];
+    let processed = false;
     for (const change of this.changeTracker.getChanges()) {
       if (!this.changeTracker.shouldTrack(change.uri)) {
-        this.fileReviews.delete(change.key);
+        if (this.fileReviews.delete(change.key)) {
+          removed.push(change.uri);
+        }
         this.changeTracker.acknowledge(change.key, change.revision);
-        changed = true;
+        processed = true;
         continue;
       }
 
@@ -46,9 +51,11 @@ export class ReviewManager implements vscode.Disposable {
           continue;
         }
         if (currentResult.kind === 'directory') {
-          this.fileReviews.delete(change.key);
+          if (this.fileReviews.delete(change.key)) {
+            removed.push(change.uri);
+          }
           this.changeTracker.acknowledge(change.key, change.revision);
-          changed = true;
+          processed = true;
           continue;
         }
 
@@ -59,27 +66,27 @@ export class ReviewManager implements vscode.Disposable {
         }
 
         const current = currentResult.snapshot;
-        const hunks = getReviewHunks(
-          vscode.workspace.asRelativePath(change.uri),
-          baseline,
-          current
-        );
+        const relativePath = vscode.workspace.asRelativePath(change.uri);
+        const hunks = getReviewHunks(relativePath, baseline, current);
         if (hunks.length === 0) {
-          this.fileReviews.delete(change.key);
+          if (this.fileReviews.delete(change.key)) {
+            removed.push(change.uri);
+          }
         } else {
           this.fileReviews.set(change.key, {
             key: change.key,
             uri: change.uri,
-            relativePath: vscode.workspace.asRelativePath(change.uri),
+            relativePath,
             baseline,
             current,
             hunks,
           });
+          changed.push(change.uri);
         }
 
         this.changeTracker.acknowledge(change.key, change.revision);
         this.reportedReadErrors.delete(change.key);
-        changed = true;
+        processed = true;
       } catch (error) {
         console.error(`[Cherry Diff] Failed to review ${change.uri.toString()}`, error);
         if (!this.reportedReadErrors.has(change.key)) {
@@ -91,8 +98,10 @@ export class ReviewManager implements vscode.Disposable {
       }
     }
 
-    if (changed) {
-      this._onDidChangeReview.fire();
+    // Acknowledged events change pending-change counts even when no review
+    // was touched, so listeners must still refresh their state.
+    if (processed) {
+      this._onDidChangeReview.fire({ changed, removed });
     }
     return this.getPendingHunks().length;
   }
@@ -108,7 +117,7 @@ export class ReviewManager implements vscode.Disposable {
       await this.baselineService.updateBaseline(review.uri, review.current);
       this.fileReviews.delete(resourceKey);
       await this.autoSave(review.uri);
-      this._onDidChangeReview.fire();
+      this.fireReviewChange([], [review.uri]);
       return true;
     }
 
@@ -125,19 +134,17 @@ export class ReviewManager implements vscode.Disposable {
       return false;
     }
 
-    const exists = newBaselineText !== '' || review.current.exists;
-    const newBaseline = exists
-      ? textFileSnapshot(
-        newBaselineText,
-        getTextEncoding(review.baseline, review.current)
-      )
-      : missingFileSnapshot();
+    const newBaseline = buildTextSnapshot(
+      review,
+      newBaselineText,
+      newBaselineText !== '' || review.current.exists
+    );
     await this.baselineService.updateBaseline(review.uri, newBaseline);
     review.baseline = newBaseline;
     this.updateReviewHunks(review);
 
     await this.autoSave(review.uri);
-    this._onDidChangeReview.fire();
+    this.fireReviewUpdate(review);
     return true;
   }
 
@@ -170,20 +177,14 @@ export class ReviewManager implements vscode.Disposable {
         );
         return false;
       }
-      const exists = newText !== '' || review.baseline.exists;
-      target = exists
-        ? textFileSnapshot(
-          newText,
-          getTextEncoding(review.baseline, review.current)
-        )
-        : missingFileSnapshot();
+      target = buildTextSnapshot(review, newText, newText !== '' || review.baseline.exists);
     }
 
     await this.applySnapshot(review.uri, review.current, target);
     review.current = target;
     this.updateReviewHunks(review);
     await this.autoSave(review.uri);
-    this._onDidChangeReview.fire();
+    this.fireReviewUpdate(review);
     return true;
   }
 
@@ -206,19 +207,19 @@ export class ReviewManager implements vscode.Disposable {
     this.fileReviews.delete(resourceKey);
     await this.autoSave(review.uri);
     if (notify) {
-      this._onDidChangeReview.fire();
+      this.fireReviewChange([], [review.uri]);
     }
     return true;
   }
 
   async resolveAll(resolution: Resolution): Promise<void> {
-    let changed = false;
-    for (const resourceKey of [...this.fileReviews.keys()]) {
-      changed = await this.resolveFile(resourceKey, resolution, false) || changed;
+    const removed: vscode.Uri[] = [];
+    for (const [resourceKey, review] of [...this.fileReviews]) {
+      if (await this.resolveFile(resourceKey, resolution, false)) {
+        removed.push(review.uri);
+      }
     }
-    if (changed) {
-      this._onDidChangeReview.fire();
-    }
+    this.fireReviewChange([], removed);
   }
 
   getFileReview(resourceKey: string): FileReview | undefined {
@@ -240,28 +241,42 @@ export class ReviewManager implements vscode.Disposable {
   }
 
   removeReviews(predicate: (review: FileReview) => boolean): void {
-    let changed = false;
+    const removed: vscode.Uri[] = [];
     for (const [key, review] of this.fileReviews) {
       if (predicate(review)) {
         this.fileReviews.delete(key);
-        changed = true;
+        removed.push(review.uri);
       }
     }
-    if (changed) {
-      this._onDidChangeReview.fire();
-    }
+    this.fireReviewChange([], removed);
   }
 
   clearReview(): void {
     if (this.fileReviews.size === 0) {
       return;
     }
+    const removed = [...this.fileReviews.values()].map((review) => review.uri);
     this.fileReviews.clear();
-    this._onDidChangeReview.fire();
+    this.fireReviewChange([], removed);
   }
 
   dispose(): void {
     this._onDidChangeReview.dispose();
+  }
+
+  private fireReviewChange(changed: vscode.Uri[], removed: vscode.Uri[]): void {
+    if (changed.length > 0 || removed.length > 0) {
+      this._onDidChangeReview.fire({ changed, removed });
+    }
+  }
+
+  /** Report a review as changed, or as removed if its last hunk was resolved. */
+  private fireReviewUpdate(review: FileReview): void {
+    if (this.fileReviews.has(review.key)) {
+      this.fireReviewChange([review.uri], []);
+    } else {
+      this.fireReviewChange([], [review.uri]);
+    }
   }
 
   private async getBaseline(uri: vscode.Uri): Promise<FileSnapshot> {
@@ -366,7 +381,7 @@ export class ReviewManager implements vscode.Disposable {
     }
     await vscode.workspace.fs.writeFile(uri, target.bytes);
     const writtenBytes = await vscode.workspace.fs.readFile(uri);
-    if (!byteArraysEqual(writtenBytes, target.bytes)) {
+    if (!bytesEqual(writtenBytes, target.bytes)) {
       throw new Error(`Written bytes could not be verified for ${uri.toString()}`);
     }
   }
@@ -401,13 +416,7 @@ function getReviewHunks(
       || current.bytes.length > MAX_TEXT_DIFF_BYTES) {
       return [createSyntheticHunk('whole-file')];
     }
-    const hunks = computeHunks(
-      relativePath,
-      baseline.text,
-      current.text,
-      baseline.exists,
-      current.exists
-    );
+    const hunks = computeHunks(relativePath, baseline.text, current.text);
     if (hunks === undefined) {
       return [createSyntheticHunk('whole-file')];
     }
@@ -424,6 +433,16 @@ function getReviewHunks(
   return [createSyntheticHunk(kind)];
 }
 
+function buildTextSnapshot(
+  review: FileReview,
+  text: string,
+  exists: boolean
+): FileSnapshot {
+  return exists
+    ? textFileSnapshot(text, getTextEncoding(review.baseline, review.current))
+    : missingFileSnapshot();
+}
+
 function getTextEncoding(
   baseline: FileSnapshot,
   current: FileSnapshot
@@ -431,16 +450,4 @@ function getTextEncoding(
   return baseline.exists
     ? baseline.encoding ?? 'utf8'
     : current.encoding ?? 'utf8';
-}
-
-function byteArraysEqual(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.length !== right.length) {
-    return false;
-  }
-  for (let index = 0; index < left.length; index++) {
-    if (left[index] !== right[index]) {
-      return false;
-    }
-  }
-  return true;
 }

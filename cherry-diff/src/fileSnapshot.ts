@@ -59,16 +59,20 @@ function encodeText(text: string, encoding: TextEncoding): Uint8Array {
   return bytes;
 }
 
-export function snapshotsEqual(left: FileSnapshot, right: FileSnapshot): boolean {
-  if (left.exists !== right.exists || left.bytes.length !== right.bytes.length) {
+export function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) {
     return false;
   }
-  for (let index = 0; index < left.bytes.length; index++) {
-    if (left.bytes[index] !== right.bytes[index]) {
+  for (let index = 0; index < left.length; index++) {
+    if (left[index] !== right[index]) {
       return false;
     }
   }
   return true;
+}
+
+export function snapshotsEqual(left: FileSnapshot, right: FileSnapshot): boolean {
+  return left.exists === right.exists && bytesEqual(left.bytes, right.bytes);
 }
 
 export function isFileNotFound(error: unknown): boolean {

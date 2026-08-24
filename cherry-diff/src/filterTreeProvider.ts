@@ -1,35 +1,45 @@
 import * as vscode from 'vscode';
+import { Debouncer } from './async';
 import { FILTER_TREE_REFRESH_DEBOUNCE_MS } from './constants';
 import { FilterService } from './filterService';
 
+interface FilterTreeItemOptions {
+  isDirectory: boolean;
+  isWorkspaceRoot?: boolean;
+  isSymbolicLink?: boolean;
+}
+
 export class FilterTreeItem extends vscode.TreeItem {
+  readonly isDirectory: boolean;
+  readonly isSymbolicLink: boolean;
+
   constructor(
     filterService: FilterService,
     public readonly uri: vscode.Uri,
-    public readonly isDirectory: boolean,
-    public readonly isWorkspaceRoot = false,
-    public readonly isSymbolicLink = false,
-    label?: string
+    label: string,
+    options: FilterTreeItemOptions
   ) {
     super(
-      label ?? uri.path.split('/').filter(Boolean).pop() ?? uri.toString(),
-      isDirectory
+      label,
+      options.isDirectory
         ? vscode.TreeItemCollapsibleState.Collapsed
         : vscode.TreeItemCollapsibleState.None
     );
+    this.isDirectory = options.isDirectory;
+    this.isSymbolicLink = options.isSymbolicLink ?? false;
 
     this.resourceUri = uri;
     this.id = `filter:${uri.toString()}`;
-    const included = filterService.isIncluded(uri, isDirectory);
+    const included = filterService.isIncluded(uri, this.isDirectory);
     this.checkboxState = included
       ? vscode.TreeItemCheckboxState.Checked
       : vscode.TreeItemCheckboxState.Unchecked;
     this.tooltip = `${filterService.getDisplayPath(uri)} — ${included ? 'included' : 'excluded'}`;
 
-    if (isWorkspaceRoot) {
+    if (options.isWorkspaceRoot) {
       this.iconPath = new vscode.ThemeIcon('root-folder');
       this.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
-    } else if (isSymbolicLink) {
+    } else if (this.isSymbolicLink) {
       this.description = 'symbolic link';
     }
   }
@@ -40,7 +50,7 @@ export class FilterTreeProvider implements vscode.TreeDataProvider<FilterTreeIte
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<FilterTreeItem | undefined>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
   private readonly disposables: vscode.Disposable[] = [];
-  private refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly refreshDebounce = new Debouncer(FILTER_TREE_REFRESH_DEBOUNCE_MS);
 
   constructor(private readonly filterService: FilterService) {
     this.disposables.push(
@@ -61,14 +71,12 @@ export class FilterTreeProvider implements vscode.TreeDataProvider<FilterTreeIte
   }
 
   async getChildren(element?: FilterTreeItem): Promise<FilterTreeItem[]> {
-    const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
     if (!element) {
-      return workspaceFolders.map((folder) => this.createItem(
-        folder.uri,
-        true,
-        true,
-        false,
-        folder.name
+      return (vscode.workspace.workspaceFolders ?? []).map((folder) => (
+        new FilterTreeItem(this.filterService, folder.uri, folder.name, {
+          isDirectory: true,
+          isWorkspaceRoot: true,
+        })
       ));
     }
 
@@ -91,17 +99,12 @@ export class FilterTreeProvider implements vscode.TreeDataProvider<FilterTreeIte
   }
 
   refresh(): void {
-    if (this.refreshTimer) {
-      clearTimeout(this.refreshTimer);
-      this.refreshTimer = undefined;
-    }
+    this.refreshDebounce.cancel();
     this._onDidChangeTreeData.fire(undefined);
   }
 
   dispose(): void {
-    if (this.refreshTimer) {
-      clearTimeout(this.refreshTimer);
-    }
+    this.refreshDebounce.cancel();
     for (const disposable of this.disposables) {
       disposable.dispose();
     }
@@ -109,33 +112,20 @@ export class FilterTreeProvider implements vscode.TreeDataProvider<FilterTreeIte
   }
 
   private scheduleRefresh(): void {
-    if (this.refreshTimer) {
-      clearTimeout(this.refreshTimer);
-    }
-    this.refreshTimer = setTimeout(() => {
-      this.refreshTimer = undefined;
-      this._onDidChangeTreeData.fire(undefined);
-    }, FILTER_TREE_REFRESH_DEBOUNCE_MS);
+    this.refreshDebounce.schedule(() => this._onDidChangeTreeData.fire(undefined));
   }
 
   private async readDirectory(uri: vscode.Uri): Promise<FilterTreeItem[]> {
     try {
       const entries = await vscode.workspace.fs.readDirectory(uri);
       return entries
-        .map(([name, type]) => {
-          const isSymbolicLink = (type & vscode.FileType.SymbolicLink) !== 0;
-          const isDirectory = (type & vscode.FileType.Directory) !== 0;
-          return {
-            name,
-            item: this.createItem(
-              vscode.Uri.joinPath(uri, name),
-              isDirectory,
-              false,
-              isSymbolicLink,
-              name
-            ),
-          };
-        })
+        .map(([name, type]) => ({
+          name,
+          item: new FilterTreeItem(this.filterService, vscode.Uri.joinPath(uri, name), name, {
+            isDirectory: (type & vscode.FileType.Directory) !== 0,
+            isSymbolicLink: (type & vscode.FileType.SymbolicLink) !== 0,
+          }),
+        }))
         .sort((left, right) => {
           if (left.item.isDirectory !== right.item.isDirectory) {
             return left.item.isDirectory ? -1 : 1;
@@ -147,22 +137,5 @@ export class FilterTreeProvider implements vscode.TreeDataProvider<FilterTreeIte
       console.error(`[Cherry Diff] Failed to read ${uri.toString()}`, error);
       return [];
     }
-  }
-
-  private createItem(
-    uri: vscode.Uri,
-    isDirectory: boolean,
-    isWorkspaceRoot: boolean,
-    isSymbolicLink: boolean,
-    label: string
-  ): FilterTreeItem {
-    return new FilterTreeItem(
-      this.filterService,
-      uri,
-      isDirectory,
-      isWorkspaceRoot,
-      isSymbolicLink,
-      label
-    );
   }
 }

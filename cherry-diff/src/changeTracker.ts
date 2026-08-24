@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import { FilterService } from './filterService';
-import { isSameOrDescendant } from './resourceUri';
 
 export type ChangeKind = 'created' | 'changed' | 'deleted';
 
@@ -59,19 +58,14 @@ export class ChangeTracker implements vscode.Disposable {
   }
 
   markChange(uri: vscode.Uri, kind: ChangeKind = 'changed'): TrackedChange | undefined {
+    if (!this.initializing && !this.tracking) {
+      return undefined;
+    }
     if (!this.shouldTrack(uri)) {
       return undefined;
     }
 
-    const target = this.initializing
-      ? this.initializationChanges
-      : this.tracking
-        ? this.changedFiles
-        : undefined;
-    if (!target) {
-      return undefined;
-    }
-
+    const target = this.initializing ? this.initializationChanges : this.changedFiles;
     const key = uri.toString();
     const previous = target.get(key);
     const change: TrackedChange = {
@@ -109,29 +103,10 @@ export class ChangeTracker implements vscode.Disposable {
     return this.changedFiles.delete(key);
   }
 
-  removeChange(uriOrKey: vscode.Uri | string, recursive = false): void {
-    const key = typeof uriOrKey === 'string' ? uriOrKey : uriOrKey.toString();
-    if (!recursive) {
-      this.changedFiles.delete(key);
-      this.initializationChanges.delete(key);
-      return;
-    }
-
-    const uri = typeof uriOrKey === 'string'
-      ? this.changedFiles.get(key)?.uri
-        ?? this.initializationChanges.get(key)?.uri
-        ?? vscode.Uri.parse(uriOrKey)
-      : uriOrKey;
-    for (const [candidateKey, change] of this.changedFiles) {
-      if (isSameOrDescendant(change.uri, uri)) {
-        this.changedFiles.delete(candidateKey);
-      }
-    }
-    for (const [candidateKey, change] of this.initializationChanges) {
-      if (isSameOrDescendant(change.uri, uri)) {
-        this.initializationChanges.delete(candidateKey);
-      }
-    }
+  removeChange(uri: vscode.Uri): void {
+    const key = uri.toString();
+    this.changedFiles.delete(key);
+    this.initializationChanges.delete(key);
   }
 
   shouldTrack(uri: vscode.Uri): boolean {

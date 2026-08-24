@@ -1,7 +1,14 @@
 import * as vscode from 'vscode';
 import { getChangedLineRange, getFirstChangedLine } from './diffService';
 import { ReviewManager } from './reviewManager';
-import type { FileReview, HunkReview } from './types';
+import type { FileReview, HunkKind, HunkReview } from './types';
+
+const HUNK_KIND_LABELS: Record<Exclude<HunkKind, 'content'>, string> = {
+  'file-created': 'file created',
+  'file-deleted': 'file deleted',
+  'binary': 'binary or encoding change',
+  'whole-file': 'large or complex file change',
+};
 
 export type ReviewTreeItem = FileTreeItem | HunkTreeItem;
 
@@ -33,19 +40,13 @@ export class HunkTreeItem extends vscode.TreeItem {
   constructor(resourceKey: string, hunkReview: HunkReview, index: number) {
     const { startLine, endLine } = getChangedLineRange(hunkReview.hunk);
     const changedLine = getFirstChangedLine(hunkReview.hunk);
-    const label = hunkReview.kind === 'file-created'
-      ? `Hunk ${index + 1}: file created`
-      : hunkReview.kind === 'file-deleted'
-        ? `Hunk ${index + 1}: file deleted`
-        : hunkReview.kind === 'binary'
-          ? `Hunk ${index + 1}: binary or encoding change`
-          : hunkReview.kind === 'whole-file'
-            ? `Hunk ${index + 1}: large or complex file change`
-            : startLine + 1 === endLine
-            ? `Hunk ${index + 1}: line ${startLine + 1}`
-            : `Hunk ${index + 1}: lines ${startLine + 1}-${endLine}`;
+    const detail = hunkReview.kind !== 'content'
+      ? HUNK_KIND_LABELS[hunkReview.kind]
+      : startLine + 1 === endLine
+        ? `line ${startLine + 1}`
+        : `lines ${startLine + 1}-${endLine}`;
 
-    super(label, vscode.TreeItemCollapsibleState.None);
+    super(`Hunk ${index + 1}: ${detail}`, vscode.TreeItemCollapsibleState.None);
     this.resourceKey = resourceKey;
     this.hunkId = hunkReview.id;
     this.id = `${resourceKey}:${hunkReview.id}`;

@@ -1,5 +1,10 @@
 import * as vscode from 'vscode';
-import { BaselineCaptureService, CaptureCancelledError } from './baselineCaptureService';
+import {
+  BaselineCaptureService,
+  CaptureCancelledError,
+  CaptureProgress,
+} from './baselineCaptureService';
+import { Debouncer, SerialQueue } from './async';
 import {
   FILTER_DEBOUNCE_MS,
   MAX_INITIALIZATION_CHANGE_ROUNDS,
@@ -14,12 +19,12 @@ import type { Resolution } from './types';
 
 /** Serializes all state-changing tracking, filtering, and review operations. */
 export class TrackingController implements vscode.Disposable {
-  private operationTail: Promise<void> = Promise.resolve();
+  private readonly operations = new SerialQueue();
   private generation = 0;
   private desiredTracking = false;
   private initializationPromise: Promise<boolean> | undefined;
-  private reviewTimer: ReturnType<typeof setTimeout> | undefined;
-  private filterTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly reviewDebounce = new Debouncer(REVIEW_DEBOUNCE_MS);
+  private readonly filterDebounce = new Debouncer(FILTER_DEBOUNCE_MS);
   private readonly disposables: vscode.Disposable[] = [];
   private readonly _onDidChangeState = new vscode.EventEmitter<void>();
   readonly onDidChangeState = this._onDidChangeState.event;
@@ -56,7 +61,7 @@ export class TrackingController implements vscode.Disposable {
     this.changes.beginInitialization();
     this._onDidChangeState.fire();
 
-    const initialization = this.enqueue(() => this.initialize(generation));
+    const initialization = this.operations.run(() => this.initialize(generation));
     this.initializationPromise = initialization;
     try {
       return await initialization;
@@ -70,11 +75,12 @@ export class TrackingController implements vscode.Disposable {
   async stopTracking(): Promise<void> {
     this.desiredTracking = false;
     this.generation++;
-    this.clearTimers();
+    this.reviewDebounce.cancel();
+    this.filterDebounce.cancel();
     this.changes.stopTracking();
     this._onDidChangeState.fire();
 
-    await this.enqueue(async () => {
+    await this.operations.run(async () => {
       this.reviews.clearReview();
       await this.baselines.deleteSessionStore();
       this._onDidChangeState.fire();
@@ -82,7 +88,7 @@ export class TrackingController implements vscode.Disposable {
   }
 
   refreshReview(): Promise<number> {
-    return this.enqueue(async () => {
+    return this.operations.run(async () => {
       if (!this.changes.isTracking()) {
         return this.reviews.getPendingHunks().length;
       }
@@ -92,29 +98,20 @@ export class TrackingController implements vscode.Disposable {
   }
 
   acceptHunk(resourceKey: string, hunkId: string): Promise<boolean> {
-    const generation = this.generation;
-    return this.enqueue(() => this.changes.isTracking() && generation === this.generation
-      ? this.reviews.acceptHunk(resourceKey, hunkId)
-      : Promise.resolve(false));
+    return this.enqueueResolution(() => this.reviews.acceptHunk(resourceKey, hunkId));
   }
 
   rejectHunk(resourceKey: string, hunkId: string): Promise<boolean> {
-    const generation = this.generation;
-    return this.enqueue(() => this.changes.isTracking() && generation === this.generation
-      ? this.reviews.rejectHunk(resourceKey, hunkId)
-      : Promise.resolve(false));
+    return this.enqueueResolution(() => this.reviews.rejectHunk(resourceKey, hunkId));
   }
 
   resolveFile(resourceKey: string, resolution: Resolution): Promise<boolean> {
-    const generation = this.generation;
-    return this.enqueue(() => this.changes.isTracking() && generation === this.generation
-      ? this.reviews.resolveFile(resourceKey, resolution)
-      : Promise.resolve(false));
+    return this.enqueueResolution(() => this.reviews.resolveFile(resourceKey, resolution));
   }
 
   resolveAll(resolution: Resolution): Promise<void> {
-    this.clearReviewTimer();
-    return this.enqueue(async () => {
+    this.reviewDebounce.cancel();
+    return this.operations.run(async () => {
       if (!this.changes.isTracking()) {
         return;
       }
@@ -140,21 +137,11 @@ export class TrackingController implements vscode.Disposable {
     return this.changes.isInitializing();
   }
 
-  async shutdown(): Promise<void> {
-    this.desiredTracking = false;
-    this.generation++;
-    this.clearTimers();
-    this.changes.stopTracking();
-    await this.enqueue(async () => {
-      this.reviews.clearReview();
-      await this.baselines.deleteSessionStore();
-    });
-  }
-
   dispose(): void {
     this.desiredTracking = false;
     this.generation++;
-    this.clearTimers();
+    this.reviewDebounce.cancel();
+    this.filterDebounce.cancel();
     for (const disposable of this.disposables) {
       disposable.dispose();
     }
@@ -162,59 +149,40 @@ export class TrackingController implements vscode.Disposable {
   }
 
   private async initialize(generation: number): Promise<boolean> {
-    const cancellationSource = new vscode.CancellationTokenSource();
     const isCancelled = (): boolean => this.isCancelled(generation);
 
     try {
       this.reviews.clearReview();
       await this.baselines.clearBaselines();
 
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: 'Cherry Diff: Preparing baselines',
-          cancellable: true,
+      await this.withCaptureProgress(
+        'Cherry Diff: Preparing baselines',
+        () => {
+          this.desiredTracking = false;
+          this.generation++;
+          this.changes.stopTracking();
+          this._onDidChangeState.fire();
         },
         async (progress, token) => {
-          const cancellationSubscription = token.onCancellationRequested(() => {
-            this.desiredTracking = false;
-            this.generation++;
-            this.changes.stopTracking();
-            cancellationSource.cancel();
-            this._onDidChangeState.fire();
-          });
-          try {
-            await this.captures.captureFilteredBaselines(
-              progress,
-              cancellationSource.token,
-              isCancelled
-            );
+          await this.captures.captureFilteredBaselines(progress, token, isCancelled);
 
-            for (let round = 0; ; round++) {
-              const pendingChanges = this.changes.takeInitializationChanges();
-              if (pendingChanges.length === 0) {
-                break;
-              }
-              if (round >= MAX_INITIALIZATION_CHANGE_ROUNDS) {
-                throw new Error(
-                  'Workspace files did not become stable while baselines were being prepared.'
-                );
-              }
-              const uris = await this.expandInitializationChanges(
-                pendingChanges,
-                progress,
-                cancellationSource.token,
-                isCancelled
-              );
-              await this.captures.captureUntilStable(
-                uris,
-                progress,
-                cancellationSource.token,
-                isCancelled
+          for (let round = 0; ; round++) {
+            const pendingChanges = this.changes.takeInitializationChanges();
+            if (pendingChanges.length === 0) {
+              break;
+            }
+            if (round >= MAX_INITIALIZATION_CHANGE_ROUNDS) {
+              throw new Error(
+                'Workspace files did not become stable while baselines were being prepared.'
               );
             }
-          } finally {
-            cancellationSubscription.dispose();
+            const uris = await this.expandInitializationChanges(
+              pendingChanges,
+              progress,
+              token,
+              isCancelled
+            );
+            await this.captures.captureUntilStable(uris, progress, token, isCancelled);
           }
         }
       );
@@ -243,8 +211,6 @@ export class TrackingController implements vscode.Disposable {
       }
       this._onDidChangeState.fire();
       return false;
-    } finally {
-      cancellationSource.dispose();
     }
   }
 
@@ -255,34 +221,24 @@ export class TrackingController implements vscode.Disposable {
 
     for (const uri of this.baselines.getBaselineUris()) {
       if (!this.filters.isIncluded(uri)) {
-        this.baselines.removeBaseline(uri, false);
+        this.baselines.removeBaseline(uri);
         this.changes.removeChange(uri);
       }
     }
     this.reviews.removeReviews((review) => !this.filters.isIncluded(review.uri));
 
     try {
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: 'Cherry Diff: Updating tracked files',
-          cancellable: true,
+      await this.withCaptureProgress(
+        'Cherry Diff: Updating tracked files',
+        () => {
+          void this.stopTracking();
         },
-        async (progress, token) => {
-          const cancellationSubscription = token.onCancellationRequested(() => {
-            void this.stopTracking();
-          });
-          try {
-            await this.captures.captureFilteredBaselines(
-              progress,
-              token,
-              () => this.isCancelled(generation),
-              true
-            );
-          } finally {
-            cancellationSubscription.dispose();
-          }
-        }
+        (progress, token) => this.captures.captureFilteredBaselines(
+          progress,
+          token,
+          () => this.isCancelled(generation),
+          true
+        )
       );
       await this.expandDirectoryChanges(generation);
       await this.reviews.refreshDirty();
@@ -297,44 +253,69 @@ export class TrackingController implements vscode.Disposable {
     }
   }
 
+  private async withCaptureProgress(
+    title: string,
+    onCancel: () => void,
+    body: (progress: CaptureProgress, token: vscode.CancellationToken) => Promise<void>
+  ): Promise<void> {
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title,
+        cancellable: true,
+      },
+      async (progress, token) => {
+        const cancellationSubscription = token.onCancellationRequested(onCancel);
+        try {
+          await body(progress, token);
+        } finally {
+          cancellationSubscription.dispose();
+        }
+      }
+    );
+  }
+
+  /** True for a directory, or a deleted path that had descendant baselines. */
+  private async isDirectoryChange(uri: vscode.Uri): Promise<boolean> {
+    try {
+      const stat = await vscode.workspace.fs.stat(uri);
+      return (stat.type & vscode.FileType.Directory) !== 0;
+    } catch (error) {
+      if (!isFileNotFound(error)) {
+        throw error;
+      }
+      return !this.baselines.hasBaseline(uri)
+        && this.baselines.getBaselineUrisUnder(uri).length > 0;
+    }
+  }
+
   private async expandInitializationChanges(
     pendingChanges: readonly TrackedChange[],
-    progress: vscode.Progress<{ message?: string; increment?: number }>,
+    progress: CaptureProgress,
     token: vscode.CancellationToken,
     isCancelled: () => boolean
   ): Promise<vscode.Uri[]> {
     const uris = new Map<string, vscode.Uri>();
 
     for (const change of pendingChanges) {
-      const baselineUris = this.baselines.getBaselineUrisUnder(change.uri);
-      let isDirectory = false;
-      try {
-        const stat = await vscode.workspace.fs.stat(change.uri);
-        isDirectory = (stat.type & vscode.FileType.Directory) !== 0;
-      } catch (error) {
-        if (!isFileNotFound(error)) {
-          throw error;
-        }
-        isDirectory = !this.baselines.hasBaseline(change.uri) && baselineUris.length > 0;
+      if (!await this.isDirectoryChange(change.uri)) {
+        uris.set(change.key, change.uri);
+        continue;
       }
 
-      if (isDirectory) {
-        for (const uri of baselineUris) {
+      for (const uri of this.baselines.getBaselineUrisUnder(change.uri)) {
+        uris.set(uri.toString(), uri);
+      }
+      const currentFiles = await this.captures.collectFilesRecursively(
+        [change.uri],
+        progress,
+        token,
+        isCancelled
+      );
+      for (const uri of currentFiles) {
+        if (this.filters.isIncluded(uri)) {
           uris.set(uri.toString(), uri);
         }
-        const currentFiles = await this.captures.collectFilesRecursively(
-          [change.uri],
-          progress,
-          token,
-          isCancelled
-        );
-        for (const uri of currentFiles) {
-          if (this.filters.isIncluded(uri)) {
-            uris.set(uri.toString(), uri);
-          }
-        }
-      } else {
-        uris.set(change.key, change.uri);
       }
     }
 
@@ -346,21 +327,7 @@ export class TrackingController implements vscode.Disposable {
       if (this.isCancelled(generation)) {
         return;
       }
-
-      const baselineUris = this.baselines.getBaselineUrisUnder(change.uri);
-      const hasExactBaseline = this.baselines.hasBaseline(change.uri);
-      let isDirectory = false;
-      try {
-        const stat = await vscode.workspace.fs.stat(change.uri);
-        isDirectory = (stat.type & vscode.FileType.Directory) !== 0;
-      } catch (error) {
-        if (!isFileNotFound(error)) {
-          throw error;
-        }
-        isDirectory = !hasExactBaseline && baselineUris.length > 0;
-      }
-
-      if (!isDirectory) {
+      if (!await this.isDirectoryChange(change.uri)) {
         continue;
       }
       if (change.kind === 'changed') {
@@ -371,7 +338,7 @@ export class TrackingController implements vscode.Disposable {
         continue;
       }
 
-      for (const uri of baselineUris) {
+      for (const uri of this.baselines.getBaselineUrisUnder(change.uri)) {
         if (this.filters.isIncluded(uri)) {
           this.changes.markChange(uri, change.kind);
         }
@@ -405,54 +372,36 @@ export class TrackingController implements vscode.Disposable {
       return;
     }
 
-    if (this.filterTimer) {
-      clearTimeout(this.filterTimer);
-    }
     const generation = this.generation;
-    this.filterTimer = setTimeout(() => {
-      this.filterTimer = undefined;
-      void this.enqueue(() => this.synchronizeFilters(generation)).catch((error) => {
+    this.filterDebounce.schedule(() => {
+      void this.operations.run(() => this.synchronizeFilters(generation)).catch((error) => {
         this.reportOperationError('apply tracked-file filters', error);
       });
-    }, FILTER_DEBOUNCE_MS);
+    });
   }
 
   private scheduleReview(): void {
     if (!this.changes.isTracking()) {
       return;
     }
-    this.clearReviewTimer();
-    this.reviewTimer = setTimeout(() => {
-      this.reviewTimer = undefined;
+    this.reviewDebounce.schedule(() => {
       void this.refreshReview().catch((error) => {
         this.reportOperationError('refresh the review', error);
       });
-    }, REVIEW_DEBOUNCE_MS);
-  }
-
-  private clearTimers(): void {
-    this.clearReviewTimer();
-    if (this.filterTimer) {
-      clearTimeout(this.filterTimer);
-      this.filterTimer = undefined;
-    }
-  }
-
-  private clearReviewTimer(): void {
-    if (this.reviewTimer) {
-      clearTimeout(this.reviewTimer);
-      this.reviewTimer = undefined;
-    }
+    });
   }
 
   private isCancelled(generation: number): boolean {
     return generation !== this.generation || !this.desiredTracking;
   }
 
-  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.operationTail.then(operation, operation);
-    this.operationTail = result.then(() => undefined, () => undefined);
-    return result;
+  private enqueueResolution(operation: () => Promise<boolean>): Promise<boolean> {
+    const generation = this.generation;
+    return this.operations.run(() => (
+      this.changes.isTracking() && generation === this.generation
+        ? operation()
+        : Promise.resolve(false)
+    ));
   }
 
   private reportOperationError(action: string, error: unknown): void {
@@ -463,6 +412,6 @@ export class TrackingController implements vscode.Disposable {
   }
 }
 
-function getErrorMessage(error: unknown): string {
+export function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

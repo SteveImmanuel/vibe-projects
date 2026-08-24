@@ -1,9 +1,7 @@
 import * as vscode from 'vscode';
 import { Minimatch } from 'minimatch';
+import { SerialQueue } from './async';
 import { FILTER_MATCH_OPTIONS, PATH_OVERRIDES_STATE_KEY } from './constants';
-import { globMatch } from './glob';
-
-type PathOverrides = Record<string, boolean>;
 
 interface FilterLocation {
   root: string;
@@ -16,32 +14,13 @@ interface StoredPathOverride extends FilterLocation {
 
 type FilterChangeKind = 'patterns' | 'overrides';
 
-export function normalizeFilterPath(relativePath: string): string {
+function normalizeFilterPath(relativePath: string): string {
   const normalized = relativePath
     .replace(/\\/g, '/')
     .replace(/^\.\/+/, '')
     .replace(/\/{2,}/g, '/')
     .replace(/\/$/, '');
   return normalized === '.' ? '' : normalized;
-}
-
-/** Pure helper retained for unit tests and settings semantics. */
-export function isPathIncluded(
-  relativePath: string,
-  includes: string[],
-  excludes: string[],
-  overrides: PathOverrides
-): boolean {
-  const normalizedPath = normalizeFilterPath(relativePath);
-  const override = findNearestRelativeOverride(normalizedPath, overrides);
-  if (override !== undefined) {
-    return override;
-  }
-
-  if (excludes.some((pattern) => globMatch(normalizedPath, pattern))) {
-    return false;
-  }
-  return includes.some((pattern) => globMatch(normalizedPath, pattern));
 }
 
 /** Cached workspace-aware matcher and visual-selection store. */
@@ -51,13 +30,19 @@ export class FilterService implements vscode.Disposable {
   private excludes: string[] = [];
   private includeMatchers: Minimatch[] = [];
   private excludeMatchers: Minimatch[] = [];
-  private overrideUpdateTail: Promise<void> = Promise.resolve();
+  private readonly overrideUpdates = new SerialQueue();
   private readonly _onDidChange = new vscode.EventEmitter<FilterChangeKind>();
   readonly onDidChange = this._onDidChange.event;
   private readonly configurationSubscription: vscode.Disposable;
 
   constructor(private readonly workspaceState: vscode.Memento) {
     this.refreshPatterns();
+    const stored = workspaceState.get<StoredPathOverride[]>(PATH_OVERRIDES_STATE_KEY) ?? [];
+    for (const override of stored) {
+      const path = normalizeFilterPath(override.path);
+      this.overrides.set(getOverrideKey(override.root, path), { ...override, path });
+    }
+
     this.configurationSubscription = vscode.workspace.onDidChangeConfiguration((event) => {
       if (!event.affectsConfiguration('cherryDiff.includePaths')
         && !event.affectsConfiguration('cherryDiff.excludePaths')) {
@@ -66,36 +51,6 @@ export class FilterService implements vscode.Disposable {
       this.refreshPatterns();
       this._onDidChange.fire('patterns');
     });
-  }
-
-  async initialize(): Promise<void> {
-    const stored = this.workspaceState.get<StoredPathOverride[]>(PATH_OVERRIDES_STATE_KEY);
-    if (stored) {
-      this.setStoredOverrides(stored);
-      return;
-    }
-
-    // Migrate the former workspace-setting representation without retaining a
-    // settings.json entry that Cherry Diff could later observe as a file edit.
-    const config = vscode.workspace.getConfiguration('cherryDiff');
-    const legacy = config.get<PathOverrides>('pathOverrides', {});
-    const migrated: StoredPathOverride[] = [];
-    for (const folder of vscode.workspace.workspaceFolders ?? []) {
-      for (const [path, included] of Object.entries(legacy)) {
-        migrated.push({
-          root: folder.uri.toString(),
-          path: normalizeFilterPath(path),
-          included,
-        });
-      }
-    }
-    this.setStoredOverrides(migrated);
-    await this.persistOverrides();
-
-    const inspection = config.inspect<PathOverrides>('pathOverrides');
-    if (inspection?.workspaceValue !== undefined) {
-      await config.update('pathOverrides', undefined, vscode.ConfigurationTarget.Workspace);
-    }
   }
 
   isIncluded(uri: vscode.Uri, asDirectory = false): boolean {
@@ -174,7 +129,7 @@ export class FilterService implements vscode.Disposable {
       recursive: boolean;
     }>
   ): Promise<void> {
-    return this.enqueueOverrideUpdate(async () => {
+    return this.overrideUpdates.run(async () => {
       for (const update of updates) {
         const location = this.getLocation(update.uri);
         if (!location) {
@@ -200,7 +155,7 @@ export class FilterService implements vscode.Disposable {
   }
 
   clearOverrides(): Promise<void> {
-    return this.enqueueOverrideUpdate(async () => {
+    return this.overrideUpdates.run(async () => {
       this.overrides.clear();
       await this.persistOverrides();
       this._onDidChange.fire('overrides');
@@ -241,48 +196,12 @@ export class FilterService implements vscode.Disposable {
     return undefined;
   }
 
-  private setStoredOverrides(stored: StoredPathOverride[]): void {
-    this.overrides.clear();
-    for (const override of stored) {
-      const normalized = {
-        ...override,
-        path: normalizeFilterPath(override.path),
-      };
-      this.overrides.set(getOverrideKey(normalized.root, normalized.path), normalized);
-    }
-  }
-
-  private enqueueOverrideUpdate(operation: () => Promise<void>): Promise<void> {
-    const result = this.overrideUpdateTail.then(operation, operation);
-    this.overrideUpdateTail = result.then(() => undefined, () => undefined);
-    return result;
-  }
-
   private async persistOverrides(): Promise<void> {
     await this.workspaceState.update(
       PATH_OVERRIDES_STATE_KEY,
       [...this.overrides.values()]
     );
   }
-}
-
-function findNearestRelativeOverride(
-  relativePath: string,
-  overrides: PathOverrides
-): boolean | undefined {
-  let candidate: string | undefined = relativePath;
-  while (candidate !== undefined) {
-    if (Object.prototype.hasOwnProperty.call(overrides, candidate)) {
-      return overrides[candidate];
-    }
-    if (!candidate) {
-      candidate = undefined;
-    } else {
-      const separatorIndex = candidate.lastIndexOf('/');
-      candidate = separatorIndex === -1 ? '' : candidate.slice(0, separatorIndex);
-    }
-  }
-  return undefined;
 }
 
 function getWorkspaceRelativePath(

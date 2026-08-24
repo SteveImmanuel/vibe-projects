@@ -41,14 +41,12 @@ const roots = [
 ];
 const configuration = {
   includePaths: ['**/*'],
-  excludePaths: [],
-  pathOverrides: {},
+  excludePaths: ['**/generated/**'],
 };
 
 const fakeVscode = {
   Uri: FakeUri,
   EventEmitter: FakeEventEmitter,
-  ConfigurationTarget: { Workspace: 2, Global: 1 },
   workspace: {
     workspaceFolders: roots,
     getWorkspaceFolder(uri) {
@@ -61,8 +59,6 @@ const fakeVscode = {
     },
     getConfiguration: () => ({
       get: (key, fallback) => configuration[key] ?? fallback,
-      inspect: () => undefined,
-      update: async () => {},
     }),
     onDidChangeConfiguration: () => ({ dispose() {} }),
   },
@@ -73,55 +69,45 @@ Module._load = function patchedLoad(request, parent, isMain) {
   if (request === 'vscode') return fakeVscode;
   return originalLoad.call(this, request, parent, isMain);
 };
-const { FilterService, isPathIncluded, normalizeFilterPath } = require('../out/filterService');
+const { FilterService } = require('../out/filterService');
 Module._load = originalLoad;
 
-test('path overrides take precedence over include and exclude globs', () => {
-  assert.equal(isPathIncluded('src/app.ts', ['**/*'], [], { src: false }), false);
-  assert.equal(
-    isPathIncluded('generated/app.ts', ['**/*'], ['generated/**'], { generated: true }),
-    true
-  );
-});
-
-test('the nearest path override wins', () => {
-  const overrides = {
-    src: false,
-    'src/selected': true,
-    'src/selected/private': false,
-  };
-
-  assert.equal(isPathIncluded('src/other.ts', ['**/*'], [], overrides), false);
-  assert.equal(isPathIncluded('src/selected/app.ts', ['**/*'], [], overrides), true);
-  assert.equal(
-    isPathIncluded('src/selected/private/secret.ts', ['**/*'], [], overrides),
-    false
-  );
-});
-
-test('paths are normalized for portable tree selections', () => {
-  assert.equal(normalizeFilterPath('.\\src\\app.ts'), 'src/app.ts');
-  assert.equal(normalizeFilterPath('./src/app.ts'), 'src/app.ts');
-});
-
-test('visual overrides are scoped to one workspace root', async () => {
+test('visual overrides beat glob filters and are scoped to one workspace root', async () => {
   const service = new FilterService(new FakeMemento());
-  await service.initialize();
+
+  // Exclude globs apply until an override re-includes the path.
+  assert.equal(service.isIncluded(FakeUri.file('/one/generated/app.ts')), false);
   await service.updateOverrides([{
+    uri: FakeUri.file('/one/generated'),
+    included: true,
+    recursive: true,
+  }]);
+  assert.equal(service.isIncluded(FakeUri.file('/one/generated/app.ts')), true);
+  assert.equal(service.isIncluded(FakeUri.file('/two/generated/app.ts')), false);
+
+  // The nearest override wins, and selections leave the other root alone.
+  await service.updateOverrides([
+    { uri: FakeUri.file('/one/src'), included: false, recursive: true },
+    { uri: FakeUri.file('/one/src/selected'), included: true, recursive: true },
+  ]);
+  assert.equal(service.isIncluded(FakeUri.file('/one/src/other.ts')), false);
+  assert.equal(service.isIncluded(FakeUri.file('/one/src/selected/app.ts')), true);
+  assert.equal(service.isIncluded(FakeUri.file('/two/src/app.ts')), true);
+  service.dispose();
+});
+
+test('overrides persist through workspace state', async () => {
+  const memento = new FakeMemento();
+  const first = new FilterService(memento);
+  await first.updateOverrides([{
     uri: FakeUri.file('/one/src'),
     included: false,
     recursive: true,
   }]);
+  first.dispose();
 
-  assert.equal(service.isIncluded(FakeUri.file('/one/src/app.ts')), false);
-  assert.equal(service.isIncluded(FakeUri.file('/two/src/app.ts')), true);
-
-  await service.updateOverrides([{
-    uri: FakeUri.file('/one/src/selected'),
-    included: true,
-    recursive: true,
-  }]);
-  assert.equal(service.isIncluded(FakeUri.file('/one/src/selected/app.ts')), true);
-  assert.equal(service.isIncluded(FakeUri.file('/one/src/other.ts')), false);
-  service.dispose();
+  const second = new FilterService(memento);
+  assert.equal(second.isIncluded(FakeUri.file('/one/src/app.ts')), false);
+  assert.equal(second.isIncluded(FakeUri.file('/one/lib/app.ts')), true);
+  second.dispose();
 });

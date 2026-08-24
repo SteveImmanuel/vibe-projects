@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- Review change events carry the affected resource URIs, so diff tabs, virtual diff documents, badges, and counters update from one precise event
+- One shared serial queue and debouncer implementation replaces per-module copies
+- Directory change classification is shared and keeps baseline index scans off the common file-change path
+- Baseline, change, and snapshot APIs accept URIs only
+
+### Removed
+- Test-only parallel filter implementation (`glob.ts`, `isPathIncluded`) in favor of the cached `FilterService` path
+- Redundant empty-file existence hunk synthesis inside `computeHunks`
+- Unused recursive and string-keyed baseline/change removal branches
+- Legacy `pathOverrides` settings-to-workspace-state migration
+- Hidden `cherryDiff.resetBaseline` compatibility alias
+- Redundant `activationEvents` entries that VS Code generates automatically
+
+### Fixed
+- Controls panel no longer writes to a disposed webview during shutdown
+
 ## [0.6.0]
 
 ### Added

@@ -65,9 +65,8 @@ export class BaselineService implements vscode.Disposable {
     return result.snapshot.exists ? 'captured' : 'missing';
   }
 
-  async getSnapshot(uriOrKey: vscode.Uri | string): Promise<FileSnapshot | undefined> {
-    const key = typeof uriOrKey === 'string' ? uriOrKey : uriOrKey.toString();
-    const entry = this.baselines.get(key);
+  async getSnapshot(uri: vscode.Uri): Promise<FileSnapshot | undefined> {
+    const entry = this.baselines.get(uri.toString());
     if (!entry) {
       return undefined;
     }
@@ -97,9 +96,8 @@ export class BaselineService implements vscode.Disposable {
     this.baselines.set(key, { uri, exists: true, blobKey });
   }
 
-  hasBaseline(uriOrKey: vscode.Uri | string): boolean {
-    const key = typeof uriOrKey === 'string' ? uriOrKey : uriOrKey.toString();
-    return this.baselines.has(key);
+  hasBaseline(uri: vscode.Uri): boolean {
+    return this.baselines.has(uri.toString());
   }
 
   getBaselineUris(): vscode.Uri[] {
@@ -116,22 +114,8 @@ export class BaselineService implements vscode.Disposable {
     return this.baselines.size;
   }
 
-  /** Remove one resource in O(1), or scan once for a directory subtree. */
-  removeBaseline(uriOrKey: vscode.Uri | string, recursive: boolean): void {
-    const key = typeof uriOrKey === 'string' ? uriOrKey : uriOrKey.toString();
-    if (!recursive) {
-      this.baselines.delete(key);
-      return;
-    }
-
-    const uri = typeof uriOrKey === 'string'
-      ? this.baselines.get(key)?.uri ?? vscode.Uri.parse(uriOrKey)
-      : uriOrKey;
-    for (const [candidateKey, entry] of this.baselines) {
-      if (isSameOrDescendant(entry.uri, uri)) {
-        this.baselines.delete(candidateKey);
-      }
-    }
+  removeBaseline(uri: vscode.Uri): void {
+    this.baselines.delete(uri.toString());
   }
 
   markComplete(): void {

@@ -8,7 +8,7 @@ import { BaselineService } from './baselineService';
 import { FilterService } from './filterService';
 import { isFileNotFound } from './fileSnapshot';
 
-type CaptureProgress = vscode.Progress<{ message?: string; increment?: number }>;
+export type CaptureProgress = vscode.Progress<{ message?: string; increment?: number }>;
 
 export class CaptureCancelledError extends Error {
   constructor() {

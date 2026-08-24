@@ -31,6 +31,12 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.
     this.lastStateKey = undefined;
     webviewView.webview.options = { enableScripts: true };
 
+    this.disposables.push(webviewView.onDidDispose(() => {
+      if (this.view === webviewView) {
+        this.view = undefined;
+      }
+    }));
+
     this.disposables.push(webviewView.webview.onDidReceiveMessage(
       (message: { command?: unknown }) => {
         if (typeof message.command !== 'string') {

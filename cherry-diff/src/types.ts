@@ -24,3 +24,10 @@ export interface FileReview {
   current: FileSnapshot;
   hunks: HunkReview[];
 }
+
+export interface ReviewChangeEvent {
+  /** Reviews that were added or updated in place. */
+  changed: readonly vscode.Uri[];
+  /** Reviews that were resolved or discarded. */
+  removed: readonly vscode.Uri[];
+}

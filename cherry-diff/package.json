@@ -16,13 +16,7 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [
-    "onView:cherryDiffControls",
-    "onView:cherryDiffReview",
-    "onView:cherryDiffFilters",
-    "onCommand:cherryDiff.enableTracking",
-    "onCommand:cherryDiff.resetBaseline"
-  ],
+  "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
     "configuration": {

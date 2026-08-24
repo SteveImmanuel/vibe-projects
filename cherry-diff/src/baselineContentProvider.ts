@@ -38,23 +38,15 @@ export class ReviewContentProvider implements vscode.TextDocumentContentProvider
   private readonly _onDidChange = new vscode.EventEmitter<vscode.Uri>();
   readonly onDidChange = this._onDidChange.event;
   private readonly reviewSubscription: vscode.Disposable;
-  private previousKeys = new Set<string>();
 
   constructor(
     private readonly reviews: ReviewManager,
     private readonly scheme: ReviewDocumentScheme,
     private readonly selectContent: (review: FileReview) => string | undefined
   ) {
-    this.reviewSubscription = reviews.onDidChangeReview(() => {
-      const currentKeys = new Set(reviews.getAllFileReviews().keys());
-      const changedKeys = new Set([...this.previousKeys, ...currentKeys]);
-      this.previousKeys = currentKeys;
-      for (const key of changedKeys) {
-        const review = reviews.getFileReview(key);
-        const sourceUri = review?.uri ?? parseResourceKey(key);
-        if (sourceUri) {
-          this._onDidChange.fire(createReviewDocumentUri(this.scheme, sourceUri));
-        }
+    this.reviewSubscription = reviews.onDidChangeReview((event) => {
+      for (const uri of [...event.changed, ...event.removed]) {
+        this._onDidChange.fire(createReviewDocumentUri(this.scheme, uri));
       }
     });
   }
@@ -117,12 +109,4 @@ export async function openDiffForReview(
       vscode.TextEditorRevealType.InCenter
     );
   }, DIFF_SCROLL_DELAY_MS);
-}
-
-function parseResourceKey(key: string): vscode.Uri | undefined {
-  try {
-    return vscode.Uri.parse(key, true);
-  } catch {
-    return undefined;
-  }
 }
