@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.6.0]
 
 ### Added
 - Serialized tracking controller with session cancellation and bounded capture retries
