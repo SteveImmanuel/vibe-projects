@@ -214,7 +214,11 @@ export class ReviewManager implements vscode.Disposable {
     this._onDidChangeReview.fire();
   }
 
-  async setAllHunksInFile(fsPath: string, status: HunkStatus): Promise<void> {
+  async setAllHunksInFile(
+    fsPath: string,
+    status: HunkStatus,
+    notify = true
+  ): Promise<void> {
     const review = this.fileReviews.get(fsPath);
     if (!review) {
       return;
@@ -245,7 +249,9 @@ export class ReviewManager implements vscode.Disposable {
     }
 
     await this.autoSave(review.uri);
-    this._onDidChangeReview.fire();
+    if (notify) {
+      this._onDidChangeReview.fire();
+    }
   }
 
   /**
@@ -313,7 +319,10 @@ export class ReviewManager implements vscode.Disposable {
   async setAllHunks(status: HunkStatus): Promise<void> {
     const fsPaths = Array.from(this.fileReviews.keys());
     for (const fsPath of fsPaths) {
-      await this.setAllHunksInFile(fsPath, status);
+      await this.setAllHunksInFile(fsPath, status, false);
+    }
+    if (fsPaths.length > 0) {
+      this._onDidChangeReview.fire();
     }
   }
 

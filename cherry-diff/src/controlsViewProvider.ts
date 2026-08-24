@@ -36,8 +36,8 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.
         case 'disableTracking':
           vscode.commands.executeCommand('cherryDiff.disableTracking');
           break;
-        case 'resetBaseline':
-          vscode.commands.executeCommand('cherryDiff.resetBaseline');
+        case 'acceptAll':
+          vscode.commands.executeCommand('cherryDiff.acceptAll');
           break;
         case 'rejectAll':
           vscode.commands.executeCommand('cherryDiff.rejectAll');
@@ -192,7 +192,7 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.
     <button class="btn-secondary" onclick="send('editFilters')" title="Open the Tracked Files tree to include or exclude files visually">Filters</button>
   </div>
   <div class="btn-row">
-    <button class="btn-accept" onclick="send('resetBaseline')" title="Accept all pending changes and set the current file states as the new baseline">Accept All</button>
+    <button class="btn-accept" onclick="send('acceptAll')" title="Accept all pending changes without rebuilding unchanged file baselines">Accept All</button>
     <button class="btn-reject" onclick="send('rejectAll')" title="Reject all pending changes and revert files to their baseline state">Reject All</button>
   </div>`
     : `

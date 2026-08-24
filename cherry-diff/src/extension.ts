@@ -24,6 +24,7 @@ let changeTracker: ChangeTracker;
 let reviewManager: ReviewManager;
 let treeView: vscode.TreeView<ReviewTreeItem>;
 let reviewDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+let filterSyncTimer: ReturnType<typeof setTimeout> | undefined;
 let trackingInitializationPromise: Promise<boolean> | undefined;
 let initializationGeneration = 0;
 
@@ -84,6 +85,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await applyFilterCheckboxChanges(filterTreeProvider, event.items);
     }
   );
+  const filterConfigurationSubscription = vscode.workspace.onDidChangeConfiguration(
+    (event) => {
+      const globFiltersChanged = event.affectsConfiguration('cherryDiff.includePaths')
+        || event.affectsConfiguration('cherryDiff.excludePaths');
+      if (!globFiltersChanged || !changeTracker.isTracking()) {
+        return;
+      }
+      if (filterSyncTimer) {
+        clearTimeout(filterSyncTimer);
+      }
+      filterSyncTimer = setTimeout(async () => {
+        filterSyncTimer = undefined;
+        try {
+          await synchronizeBaselinesWithFilters();
+          await reviewManager.startReview();
+        } catch (error) {
+          console.error('[Cherry Diff] Failed to apply glob filter changes', error);
+          vscode.window.showErrorMessage(
+            'Cherry Diff: Failed to apply the updated include/exclude filters.'
+          );
+        }
+      }, 300);
+    }
+  );
+
   // Auto-refresh: recompute diffs when files change (debounced, sidebar only)
   const trackedFilesSubscription = changeTracker.onDidChangeTrackedFiles(() => {
     if (reviewManager.isApplying()) {
@@ -147,12 +173,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
-    // Reset baseline — capture current state as the new baseline
+    // Legacy command ID retained for compatibility; this now accepts only
+    // pending changes instead of rebuilding every workspace baseline.
     vscode.commands.registerCommand('cherryDiff.resetBaseline', async () => {
-      reviewManager.clearReview();
-      changeTracker.clearChangedFiles();
-      await initializeTracking(controlsProvider);
-      updateBadge();
+      await resolveAllPendingChanges('accepted');
     }),
 
     // Disable tracking
@@ -239,11 +263,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
 
     vscode.commands.registerCommand('cherryDiff.acceptAll', async () => {
-      await reviewManager.setAllHunks('accepted');
+      await resolveAllPendingChanges('accepted');
     }),
 
     vscode.commands.registerCommand('cherryDiff.rejectAll', async () => {
-      await reviewManager.setAllHunks('rejected');
+      await resolveAllPendingChanges('rejected');
     }),
 
     // Open settings for include/exclude filters
@@ -260,24 +284,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
 
     vscode.commands.registerCommand('cherryDiff.clearPathOverrides', async () => {
-      const hasPendingChanges = reviewManager.isReviewActive();
-      if (hasPendingChanges) {
-        const confirmation = await vscode.window.showWarningMessage(
-          'Resetting file selections will accept current pending changes as the new baseline.',
-          { modal: true },
-          'Reset Selections'
-        );
-        if (confirmation !== 'Reset Selections') {
-          return;
-        }
-      }
-
       await clearPathOverrides();
       filterTreeProvider.refresh();
       if (changeTracker.isTracking()) {
-        reviewManager.clearReview();
-        changeTracker.clearChangedFiles();
-        await initializeTracking(controlsProvider);
+        await synchronizeBaselinesWithFilters();
+        await reviewManager.startReview();
       }
     })
   );
@@ -291,6 +302,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     filterTreeProvider,
     filterTreeView,
     filterCheckboxSubscription,
+    filterConfigurationSubscription,
     trackedFilesSubscription,
     reviewSubscription,
     changeTracker,
@@ -303,6 +315,47 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // registered when normal tracking is enabled, avoiding a post-init gap.
   await initializeTracking(controlsProvider);
   updateBadge();
+}
+
+async function resolveAllPendingChanges(
+  status: 'accepted' | 'rejected'
+): Promise<void> {
+  if (reviewDebounceTimer) {
+    clearTimeout(reviewDebounceTimer);
+    reviewDebounceTimer = undefined;
+  }
+
+  // Pull in filesystem events that arrived just before the button click so
+  // bulk actions cannot miss files waiting for the debounce timer.
+  await reviewManager.startReview();
+  await reviewManager.setAllHunks(status);
+  updateBadge();
+}
+
+async function synchronizeBaselinesWithFilters(): Promise<void> {
+  for (const fsPath of baselineService.getBaselinePaths()) {
+    if (!isUriIncluded(vscode.Uri.file(fsPath))) {
+      await baselineService.removeBaseline(fsPath, false);
+    }
+  }
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'Cherry Diff: Updating tracked files',
+      cancellable: false,
+    },
+    async (progress) => {
+      let unstable = await captureFilteredBaselines(progress, () => false, true);
+      while (unstable.size > 0) {
+        unstable = await captureBaselinePaths(
+          [...unstable].map((fsPath) => vscode.Uri.file(fsPath)),
+          undefined,
+          () => false
+        );
+      }
+    }
+  );
 }
 
 async function applyFilterCheckboxChanges(
@@ -495,7 +548,8 @@ async function performTrackingInitialization(
 
 async function captureFilteredBaselines(
   progress: vscode.Progress<{ message?: string; increment?: number }>,
-  isCancelled: () => boolean
+  isCancelled: () => boolean,
+  onlyMissing = false
 ): Promise<Set<string>> {
   const config = vscode.workspace.getConfiguration('cherryDiff');
   const includes: string[] = config.get('includePaths', ['**/*']);
@@ -536,7 +590,8 @@ async function captureFilteredBaselines(
       return false;
     }
     seen.add(uri.fsPath);
-    return isUriIncluded(uri);
+    return isUriIncluded(uri)
+      && (!onlyMissing || !baselineService.hasBaseline(uri.fsPath));
   });
 
   // Capture visible/open files first so their pre-edit state is secured as
@@ -659,5 +714,8 @@ async function closeDiffTab(fsPath: string): Promise<void> {
 export function deactivate(): void {
   if (reviewDebounceTimer) {
     clearTimeout(reviewDebounceTimer);
+  }
+  if (filterSyncTimer) {
+    clearTimeout(filterSyncTimer);
   }
 }

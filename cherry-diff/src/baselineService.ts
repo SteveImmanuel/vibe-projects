@@ -162,6 +162,14 @@ export class BaselineService implements vscode.Disposable {
     });
   }
 
+  hasBaseline(fsPath: string): boolean {
+    return this.baselines.has(fsPath);
+  }
+
+  getBaselinePaths(): string[] {
+    return [...this.baselines.keys()];
+  }
+
   getBaselineCount(): number {
     return this.baselines.size;
   }
