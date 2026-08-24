@@ -6,3 +6,4 @@ tsconfig.json
 **/*.map
 AGENTS.md
 CHANGELOG.md
+test/**
