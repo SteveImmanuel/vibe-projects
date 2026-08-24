@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0]
+
+### Added
+- Disk-backed, content-addressed baseline storage under the extension workspace storage directory
+- Initialization status and progress reporting while baseline snapshots are prepared
+- Race-aware initialization that watches and recaptures files changed during the initial snapshot
+- Automated coverage for blob deduplication, lazy loading, missing files, and unsaved open documents
+
+### Changed
+- Baseline file contents are loaded into memory only after a file enters review
+- Initial capture prioritizes open files and reads the workspace with bounded concurrency instead of opening every file as a VS Code document
+
 ## [0.3.2]
 
 ### Fixed

@@ -12,7 +12,7 @@ The core idea: instead of accepting or rejecting an entire file's changes at onc
 - **Marketplace-publishable** — uses only stable, public VS Code APIs (no proposed APIs)
 - **Non-invasive** — no inline editor UI (no CodeLens, no decorations). All review happens in a dedicated sidebar panel + VS Code's native diff editor
 
-## Current state (v0.3.2)
+## Current state (v0.4.0)
 
 Working MVP. Core features implemented:
 - Tracks file changes (create, modify, delete) with configurable include/exclude glob filters
