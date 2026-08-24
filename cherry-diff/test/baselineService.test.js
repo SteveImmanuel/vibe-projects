@@ -136,6 +136,10 @@ test('stores deduplicated baselines on disk and loads them lazily', async () => 
   assert.equal(fake.blobFiles().length, 2);
   await service.updateBaseline('/workspace/b.txt', 'accepted content', true);
   assert.equal(fake.blobFiles().length, 1);
+
+  await service.removeBaseline('/workspace', true);
+  assert.equal(service.getBaselineCount(), 0);
+  assert.equal(fake.blobFiles().length, 0);
 });
 
 test('records missing files without creating content blobs', async () => {

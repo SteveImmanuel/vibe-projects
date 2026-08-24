@@ -15,6 +15,8 @@ import {
   openDiffForFile,
 } from './baselineContentProvider';
 import { ControlsViewProvider } from './controlsViewProvider';
+import { FilterTreeItem, FilterTreeProvider } from './filterTreeProvider';
+import { clearPathOverrides, isUriIncluded, PathOverrides } from './filterService';
 import { getFirstChangedLine } from './diffService';
 
 let baselineService: BaselineService;
@@ -63,6 +65,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     treeDataProvider: treeProvider,
   });
 
+  // Explorer-style include/exclude tree at the bottom of the sidebar.
+  const filterTreeProvider = new FilterTreeProvider();
+  const filterTreeView = vscode.window.createTreeView('cherryDiffFilters', {
+    treeDataProvider: filterTreeProvider,
+    manageCheckboxStateManually: true,
+    showCollapseAll: true,
+  });
+  const filterCheckboxSubscription = filterTreeView.onDidChangeCheckboxState(
+    async (event) => {
+      if (changeTracker.isInitializing()) {
+        vscode.window.showInformationMessage(
+          'Cherry Diff: Wait for baseline preparation to finish before changing file selections.'
+        );
+        filterTreeProvider.refresh();
+        return;
+      }
+      await applyFilterCheckboxChanges(filterTreeProvider, event.items);
+    }
+  );
   // Auto-refresh: recompute diffs when files change (debounced, sidebar only)
   const trackedFilesSubscription = changeTracker.onDidChangeTrackedFiles(() => {
     if (reviewManager.isApplying()) {
@@ -227,10 +248,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // Open settings for include/exclude filters
     vscode.commands.registerCommand('cherryDiff.editFilters', () => {
-      vscode.commands.executeCommand(
-        'workbench.action.openSettings',
-        'cherryDiff'
-      );
+      vscode.commands.executeCommand('cherryDiffFilters.focus');
     }),
 
     vscode.commands.registerCommand('cherryDiff.nextHunk', () => {
@@ -239,6 +257,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     vscode.commands.registerCommand('cherryDiff.prevHunk', () => {
       navigateHunk('prev');
+    }),
+
+    vscode.commands.registerCommand('cherryDiff.clearPathOverrides', async () => {
+      const hasPendingChanges = reviewManager.isReviewActive();
+      if (hasPendingChanges) {
+        const confirmation = await vscode.window.showWarningMessage(
+          'Resetting file selections will accept current pending changes as the new baseline.',
+          { modal: true },
+          'Reset Selections'
+        );
+        if (confirmation !== 'Reset Selections') {
+          return;
+        }
+      }
+
+      await clearPathOverrides();
+      filterTreeProvider.refresh();
+      if (changeTracker.isTracking()) {
+        reviewManager.clearReview();
+        changeTracker.clearChangedFiles();
+        await initializeTracking(controlsProvider);
+      }
     })
   );
 
@@ -248,6 +288,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     currentContentProvider,
     controlsProvider,
     treeProvider,
+    filterTreeProvider,
+    filterTreeView,
+    filterCheckboxSubscription,
     trackedFilesSubscription,
     reviewSubscription,
     changeTracker,
@@ -260,6 +303,103 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // registered when normal tracking is enabled, avoiding a post-init gap.
   await initializeTracking(controlsProvider);
   updateBadge();
+}
+
+async function applyFilterCheckboxChanges(
+  provider: FilterTreeProvider,
+  changes: ReadonlyArray<[FilterTreeItem, vscode.TreeItemCheckboxState]>
+): Promise<void> {
+  try {
+    await provider.applyCheckboxChanges(changes);
+    if (!changeTracker.isTracking()) {
+      return;
+    }
+
+    const includedItems = changes
+      .filter(([, state]) => state === vscode.TreeItemCheckboxState.Checked)
+      .map(([item]) => item);
+    const excludedItems = changes
+      .filter(([, state]) => state === vscode.TreeItemCheckboxState.Unchecked)
+      .map(([item]) => item);
+
+    for (const item of excludedItems) {
+      await baselineService.removeBaseline(item.uri.fsPath, item.isDirectory);
+    }
+
+    if (includedItems.length > 0) {
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: 'Cherry Diff: Adding tracked files',
+          cancellable: false,
+        },
+        async (progress) => {
+          const uris = await collectFilesForFilterItems(includedItems, progress);
+          let unstable = await captureBaselinePaths(uris, progress, () => false);
+          while (unstable.size > 0) {
+            unstable = await captureBaselinePaths(
+              [...unstable].map((fsPath) => vscode.Uri.file(fsPath)),
+              undefined,
+              () => false
+            );
+          }
+        }
+      );
+    }
+
+    await reviewManager.startReview();
+  } catch (error) {
+    console.error('[Cherry Diff] Failed to update tracked file selections', error);
+    vscode.window.showErrorMessage(
+      'Cherry Diff: Failed to update the tracked file selections.'
+    );
+    provider.refresh();
+  }
+}
+
+async function collectFilesForFilterItems(
+  items: FilterTreeItem[],
+  progress: vscode.Progress<{ message?: string; increment?: number }>
+): Promise<vscode.Uri[]> {
+  const files = new Map<string, vscode.Uri>();
+  const directories = items.filter((item) => item.isDirectory).map((item) => item.uri);
+  for (const item of items) {
+    if (!item.isDirectory) {
+      files.set(item.uri.fsPath, item.uri);
+    }
+  }
+
+  let scannedDirectories = 0;
+  while (directories.length > 0) {
+    const directory = directories.shift();
+    if (!directory) {
+      break;
+    }
+
+    let entries: [string, vscode.FileType][];
+    try {
+      entries = await vscode.workspace.fs.readDirectory(directory);
+    } catch {
+      continue;
+    }
+
+    scannedDirectories++;
+    progress.report({ message: `${files.size.toLocaleString()} files found` });
+    for (const [name, type] of entries) {
+      const uri = vscode.Uri.joinPath(directory, name);
+      if ((type & vscode.FileType.Directory) !== 0
+        && (type & vscode.FileType.SymbolicLink) === 0) {
+        directories.push(uri);
+      } else if ((type & vscode.FileType.Directory) === 0) {
+        files.set(uri.fsPath, uri);
+      }
+    }
+  }
+
+  if (scannedDirectories > 0) {
+    progress.report({ message: `Capturing ${files.size.toLocaleString()} files` });
+  }
+  return [...files.values()];
 }
 
 async function initializeTracking(
@@ -360,6 +500,7 @@ async function captureFilteredBaselines(
   const config = vscode.workspace.getConfiguration('cherryDiff');
   const includes: string[] = config.get('includePaths', ['**/*']);
   const excludes: string[] = config.get('excludePaths', []);
+  const overrides = config.get<PathOverrides>('pathOverrides', {});
   const excludePattern = excludes.length > 0
     ? `{${excludes.join(',')}}`
     : undefined;
@@ -374,13 +515,28 @@ async function captureFilteredBaselines(
     allFiles.push(...files);
   }
 
+  // Explicit checked paths can override both include and exclude globs, so
+  // discover them separately without the glob exclusion expression.
+  for (const [overridePath, included] of Object.entries(overrides)) {
+    if (!included || isCancelled()) {
+      continue;
+    }
+    const exactPattern = overridePath || '**/*';
+    allFiles.push(...await vscode.workspace.findFiles(exactPattern, null, 50000));
+    if (overridePath) {
+      allFiles.push(
+        ...await vscode.workspace.findFiles(`${overridePath}/**`, null, 50000)
+      );
+    }
+  }
+
   const seen = new Set<string>();
   const uniqueFiles = allFiles.filter((uri) => {
     if (seen.has(uri.fsPath)) {
       return false;
     }
     seen.add(uri.fsPath);
-    return true;
+    return isUriIncluded(uri);
   });
 
   // Capture visible/open files first so their pre-edit state is secured as

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { globMatch } from './glob';
+import { isUriIncluded } from './filterService';
 
 /**
  * Tracks files modified in the workspace, filtered by include/exclude globs.
@@ -84,25 +84,8 @@ export class ChangeTracker implements vscode.Disposable {
   /**
    * Check if a file URI matches the include/exclude filters from settings.
    */
-  private shouldTrack(uri: vscode.Uri): boolean {
-    const relativePath = vscode.workspace.asRelativePath(uri, false);
-    const config = vscode.workspace.getConfiguration('cherryDiff');
-    const excludes: string[] = config.get('excludePaths', []);
-
-    for (const pattern of excludes) {
-      if (globMatch(relativePath, pattern)) {
-        return false;
-      }
-    }
-
-    const includes: string[] = config.get('includePaths', ['**/*']);
-    for (const pattern of includes) {
-      if (globMatch(relativePath, pattern)) {
-        return true;
-      }
-    }
-
-    return false;
+  shouldTrack(uri: vscode.Uri): boolean {
+    return isUriIncluded(uri);
   }
 
   getChangedFiles(): Set<string> {

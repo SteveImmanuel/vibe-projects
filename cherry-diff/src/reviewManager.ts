@@ -27,6 +27,9 @@ export class ReviewManager implements vscode.Disposable {
 
     for (const fsPath of changedFiles) {
       const uri = vscode.Uri.file(fsPath);
+      if (!this.changeTracker.shouldTrack(uri)) {
+        continue;
+      }
       const relativePath = vscode.workspace.asRelativePath(uri);
       let baseline: BaselineSnapshot | undefined;
       try {

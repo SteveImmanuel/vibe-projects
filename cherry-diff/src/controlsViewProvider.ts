@@ -189,7 +189,7 @@ export class ControlsViewProvider implements vscode.WebviewViewProvider, vscode.
   </div>
   <div class="btn-row">
     <button class="btn-primary" onclick="send('startReview')" title="Check for new file changes and update the review list">Refresh</button>
-    <button class="btn-secondary" onclick="send('editFilters')" title="Configure which files and directories to include or exclude from tracking">Filters</button>
+    <button class="btn-secondary" onclick="send('editFilters')" title="Open the Tracked Files tree to include or exclude files visually">Filters</button>
   </div>
   <div class="btn-row">
     <button class="btn-accept" onclick="send('resetBaseline')" title="Accept all pending changes and set the current file states as the new baseline">Accept All</button>

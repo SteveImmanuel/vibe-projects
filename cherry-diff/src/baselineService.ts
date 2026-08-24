@@ -166,6 +166,23 @@ export class BaselineService implements vscode.Disposable {
     return this.baselines.size;
   }
 
+  /** Remove one file or a directory subtree from the tracked baseline set. */
+  async removeBaseline(fsPath: string, recursive: boolean): Promise<void> {
+    const separator = fsPath.includes('\\') ? '\\' : '/';
+    const prefix = fsPath.endsWith(separator) ? fsPath : `${fsPath}${separator}`;
+    const paths = [...this.baselines.keys()].filter(
+      (candidate) => candidate === fsPath || (recursive && candidate.startsWith(prefix))
+    );
+
+    for (const candidate of paths) {
+      const blobHash = this.baselines.get(candidate)?.blobHash;
+      this.baselines.delete(candidate);
+      if (blobHash) {
+        await this.releaseBlob(blobHash);
+      }
+    }
+  }
+
   private async ensureInitialized(): Promise<void> {
     if (!this.initialized) {
       await vscode.workspace.fs.createDirectory(this.blobsUri);
@@ -210,16 +227,20 @@ export class BaselineService implements vscode.Disposable {
       return;
     }
 
-    const remainingReferences = (this.blobRefCounts.get(previousHash) ?? 1) - 1;
+    await this.releaseBlob(previousHash);
+  }
+
+  private async releaseBlob(hash: string): Promise<void> {
+    const remainingReferences = (this.blobRefCounts.get(hash) ?? 1) - 1;
     if (remainingReferences > 0) {
-      this.blobRefCounts.set(previousHash, remainingReferences);
+      this.blobRefCounts.set(hash, remainingReferences);
       return;
     }
 
-    this.blobRefCounts.delete(previousHash);
-    this.knownBlobs.delete(previousHash);
+    this.blobRefCounts.delete(hash);
+    this.knownBlobs.delete(hash);
     try {
-      await vscode.workspace.fs.delete(this.getBlobUri(previousHash));
+      await vscode.workspace.fs.delete(this.getBlobUri(hash));
     } catch {
       // The next session reset removes any orphaned blob.
     }
