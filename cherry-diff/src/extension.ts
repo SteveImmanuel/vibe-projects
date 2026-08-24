@@ -82,7 +82,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const reviewSubscription = reviewManager.onDidChangeReview(async () => {
     const currentReviewFiles = new Set(reviewManager.getAllFileReviews().keys());
 
-    // Close diff tabs for resolved files, then open next file if any remain
+    // Close diff tabs for resolved files without changing the user's active editor.
     const resolvedFiles: string[] = [];
     for (const fsPath of previousReviewFiles) {
       if (!currentReviewFiles.has(fsPath)) {
@@ -94,13 +94,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     for (const fsPath of resolvedFiles) {
       await closeDiffTab(fsPath);
     }
-    if (resolvedFiles.length > 0 && currentReviewFiles.size > 0) {
-      const nextFile = currentReviewFiles.values().next().value;
-      if (nextFile) {
-        await openDiffForFile(nextFile);
-      }
-    }
-
     // Sync changed files: remove files that no longer have pending hunks
     for (const fsPath of changeTracker.getChangedFiles()) {
       if (!currentReviewFiles.has(fsPath)) {
