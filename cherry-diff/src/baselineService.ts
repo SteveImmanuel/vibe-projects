@@ -4,8 +4,13 @@ import * as vscode from 'vscode';
  * Manages file baselines by capturing snapshots when tracking starts.
  * Works with any project (Git, non-Git, no VCS).
  */
+export interface BaselineSnapshot {
+  content: string;
+  exists: boolean;
+}
+
 export class BaselineService implements vscode.Disposable {
-  private baselines = new Map<string, string>(); // fsPath -> baseline content
+  private baselines = new Map<string, BaselineSnapshot>(); // fsPath -> baseline state
 
   /**
    * Capture the current content of a file as its baseline.
@@ -13,7 +18,7 @@ export class BaselineService implements vscode.Disposable {
   async captureBaseline(uri: vscode.Uri): Promise<void> {
     try {
       const doc = await vscode.workspace.openTextDocument(uri);
-      this.baselines.set(uri.fsPath, doc.getText());
+      this.baselines.set(uri.fsPath, { content: doc.getText(), exists: true });
     } catch {
       // File might not exist or be readable
     }
@@ -23,14 +28,22 @@ export class BaselineService implements vscode.Disposable {
    * Get the baseline content for a file, or undefined if not captured.
    */
   getBaseline(fsPath: string): string | undefined {
-    return this.baselines.get(fsPath);
+    return this.baselines.get(fsPath)?.content;
   }
 
   /**
-   * Update the baseline for a file (e.g. after all hunks are resolved).
+   * Get the complete baseline state, including whether the file existed.
    */
-  updateBaseline(fsPath: string, content: string): void {
-    this.baselines.set(fsPath, content);
+  getSnapshot(fsPath: string): BaselineSnapshot | undefined {
+    const snapshot = this.baselines.get(fsPath);
+    return snapshot ? { ...snapshot } : undefined;
+  }
+
+  /**
+   * Update the baseline for a file (e.g. after accepting a change).
+   */
+  updateBaseline(fsPath: string, content: string, exists = true): void {
+    this.baselines.set(fsPath, { content, exists });
   }
 
   /**

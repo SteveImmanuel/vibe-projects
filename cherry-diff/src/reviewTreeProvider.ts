@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ReviewManager } from './reviewManager';
-import { FileReview, HunkReview } from './types';
+import type { FileReview, HunkReview } from './types';
 import { getChangedLineRange, getFirstChangedLine } from './diffService';
 
 export type ReviewTreeItem = FileTreeItem | HunkTreeItem;
@@ -40,9 +40,13 @@ export class HunkTreeItem extends vscode.TreeItem {
   ) {
     const { startLine, endLine } = getChangedLineRange(hunkReview.hunk);
     const changedLine = getFirstChangedLine(hunkReview.hunk);
-    const label = startLine + 1 === endLine
-      ? `Hunk ${index + 1}: line ${startLine + 1}`
-      : `Hunk ${index + 1}: lines ${startLine + 1}-${endLine}`;
+    const label = hunkReview.kind === 'file-created'
+      ? `Hunk ${index + 1}: empty file created`
+      : hunkReview.kind === 'file-deleted'
+        ? `Hunk ${index + 1}: empty file deleted`
+        : startLine + 1 === endLine
+          ? `Hunk ${index + 1}: line ${startLine + 1}`
+          : `Hunk ${index + 1}: lines ${startLine + 1}-${endLine}`;
 
     super(label, vscode.TreeItemCollapsibleState.None);
 
@@ -61,12 +65,13 @@ export class HunkTreeItem extends vscode.TreeItem {
   }
 }
 
-export class ReviewTreeProvider implements vscode.TreeDataProvider<ReviewTreeItem> {
+export class ReviewTreeProvider implements vscode.TreeDataProvider<ReviewTreeItem>, vscode.Disposable {
   private _onDidChangeTreeData = new vscode.EventEmitter<ReviewTreeItem | undefined | null>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+  private readonly reviewSubscription: vscode.Disposable;
 
   constructor(private reviewManager: ReviewManager) {
-    reviewManager.onDidChangeReview(() => {
+    this.reviewSubscription = reviewManager.onDidChangeReview(() => {
       this._onDidChangeTreeData.fire(null);
     });
   }
@@ -91,5 +96,10 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<ReviewTreeIte
     }
 
     return [];
+  }
+
+  dispose(): void {
+    this.reviewSubscription.dispose();
+    this._onDidChangeTreeData.dispose();
   }
 }

@@ -16,7 +16,7 @@ export class ReviewManager implements vscode.Disposable {
   ) {}
 
   async startReview(): Promise<number> {
-    if (this.applying) {
+    if (this.applying || !this.changeTracker.isTracking()) {
       return 0;
     }
 
@@ -27,25 +27,38 @@ export class ReviewManager implements vscode.Disposable {
     for (const fsPath of changedFiles) {
       const uri = vscode.Uri.file(fsPath);
       const relativePath = vscode.workspace.asRelativePath(uri);
+      const baseline = this.baselineService.getSnapshot(fsPath);
+      const baselineContent = baseline?.content ?? '';
+      const baselineExists = baseline?.exists ?? false;
 
-      // New files have no baseline — treat as empty (entire file is "added")
-      const baselineContent = this.baselineService.getBaseline(fsPath) ?? '';
-
-      let currentContent: string;
+      let currentContent = '';
+      let currentExists = false;
       try {
-        await vscode.workspace.fs.stat(uri);
+        const stat = await vscode.workspace.fs.stat(uri);
+        if ((stat.type & vscode.FileType.Directory) !== 0) {
+          continue;
+        }
+        currentExists = true;
         const doc = await vscode.workspace.openTextDocument(uri);
         currentContent = doc.getText();
       } catch {
-        // File was deleted — treat current content as empty
-        currentContent = '';
+        if (currentExists) {
+          // The file exists but is not a readable text document.
+          continue;
+        }
       }
 
-      if (baselineContent === currentContent) {
+      if (baselineContent === currentContent && baselineExists === currentExists) {
         continue;
       }
 
-      const hunks = computeHunks(relativePath, baselineContent, currentContent);
+      const hunks = computeHunks(
+        relativePath,
+        baselineContent,
+        currentContent,
+        baselineExists,
+        currentExists
+      );
       if (hunks.length === 0) {
         continue;
       }
@@ -54,7 +67,9 @@ export class ReviewManager implements vscode.Disposable {
         uri,
         relativePath,
         baselineContent,
+        baselineExists,
         currentContent,
+        currentExists,
         hunks,
       });
 
@@ -75,6 +90,20 @@ export class ReviewManager implements vscode.Disposable {
       return;
     }
 
+    if (hunk.kind !== 'content') {
+      review.baselineContent = review.currentContent;
+      review.baselineExists = review.currentExists;
+      this.baselineService.updateBaseline(
+        fsPath,
+        review.currentContent,
+        review.currentExists
+      );
+      this.fileReviews.delete(fsPath);
+      await this.autoSave(review.uri);
+      this._onDidChangeReview.fire();
+      return;
+    }
+
     const newBaseline = reconstructFile(
       review.relativePath,
       review.baselineContent,
@@ -86,13 +115,17 @@ export class ReviewManager implements vscode.Disposable {
       return;
     }
 
+    const newBaselineExists = newBaseline !== '' || review.currentExists;
     review.baselineContent = newBaseline;
-    this.baselineService.updateBaseline(fsPath, newBaseline);
+    review.baselineExists = newBaselineExists;
+    this.baselineService.updateBaseline(fsPath, newBaseline, newBaselineExists);
 
     const remainingHunks = computeHunks(
       review.relativePath,
       review.baselineContent,
-      review.currentContent
+      review.currentContent,
+      review.baselineExists,
+      review.currentExists
     );
 
     if (remainingHunks.length === 0) {
@@ -101,6 +134,7 @@ export class ReviewManager implements vscode.Disposable {
       review.hunks = remainingHunks;
     }
 
+    await this.autoSave(review.uri);
     this._onDidChangeReview.fire();
   }
 
@@ -114,15 +148,15 @@ export class ReviewManager implements vscode.Disposable {
       return;
     }
 
+    const rejectedHunk = review.hunks[hunkIndex];
     const keepHunks = review.hunks
       .filter((_, i) => i !== hunkIndex)
+      .filter((h) => h.kind === 'content')
       .map((h) => h.hunk);
 
-    const newContent = reconstructFile(
-      review.relativePath,
-      review.baselineContent,
-      keepHunks
-    );
+    const newContent = rejectedHunk.kind === 'content'
+      ? reconstructFile(review.relativePath, review.baselineContent, keepHunks)
+      : review.baselineContent;
 
     if (newContent === false) {
       vscode.window.showErrorMessage(
@@ -131,20 +165,27 @@ export class ReviewManager implements vscode.Disposable {
       return;
     }
 
+    const newExists = rejectedHunk.kind === 'content'
+      ? newContent !== '' || review.baselineExists
+      : review.baselineExists;
+
     this.applying = true;
     try {
-      await this.writeFileContent(review.uri, newContent);
+      await this.writeFileContent(review.uri, newContent, newExists);
 
       review.currentContent = newContent;
+      review.currentExists = newExists;
       const remainingHunks = computeHunks(
         review.relativePath,
         review.baselineContent,
-        newContent
+        newContent,
+        review.baselineExists,
+        newExists
       );
 
       if (remainingHunks.length === 0) {
         this.fileReviews.delete(fsPath);
-        this.baselineService.updateBaseline(fsPath, newContent);
+        this.baselineService.updateBaseline(fsPath, newContent, newExists);
       } else {
         review.hunks = remainingHunks;
       }
@@ -165,13 +206,21 @@ export class ReviewManager implements vscode.Disposable {
     if (status === 'accepted') {
       // Accept all: advance baseline to current content
       // If file was deleted (currentContent === ''), accepting means confirming deletion
-      this.baselineService.updateBaseline(fsPath, review.currentContent);
+      this.baselineService.updateBaseline(
+        fsPath,
+        review.currentContent,
+        review.currentExists
+      );
       this.fileReviews.delete(fsPath);
     } else if (status === 'rejected') {
       // Reject all: revert file to baseline
       this.applying = true;
       try {
-        await this.writeFileContent(review.uri, review.baselineContent);
+        await this.writeFileContent(
+          review.uri,
+          review.baselineContent,
+          review.baselineExists
+        );
       } finally {
         this.applying = false;
       }
@@ -183,14 +232,15 @@ export class ReviewManager implements vscode.Disposable {
   }
 
   /**
-   * Write content to a file, handling new/deleted file edge cases:
-   * - If content is empty and baseline is empty: delete the file (was a new file, rejecting it)
-   * - If content is non-empty but file doesn't exist: create the file (was deleted, rejecting restores it)
-   * - Otherwise: replace file content normally
+   * Write a complete file state, keeping existence separate from content so
+   * an empty file is not confused with a missing file.
    */
-  private async writeFileContent(uri: vscode.Uri, content: string): Promise<void> {
-    if (content === '') {
-      // Empty content means delete the file (rejected new file, or all content removed)
+  private async writeFileContent(
+    uri: vscode.Uri,
+    content: string,
+    shouldExist: boolean
+  ): Promise<void> {
+    if (!shouldExist) {
       try {
         await vscode.workspace.fs.delete(uri);
       } catch {

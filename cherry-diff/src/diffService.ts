@@ -1,6 +1,6 @@
 import { structuredPatch, applyPatch, formatPatch } from 'diff';
 import type { Hunk, ParsedDiff } from 'diff';
-import { HunkReview } from './types';
+import type { HunkReview } from './types';
 
 let nextHunkId = 0;
 
@@ -15,7 +15,9 @@ function generateHunkId(): string {
 export function computeHunks(
   relativePath: string,
   baselineContent: string,
-  currentContent: string
+  currentContent: string,
+  baselineExists = true,
+  currentExists = true
 ): HunkReview[] {
   const patch = structuredPatch(
     relativePath,
@@ -24,11 +26,31 @@ export function computeHunks(
     currentContent
   );
 
-  return patch.hunks.map((hunk) => ({
+  const hunks: HunkReview[] = patch.hunks.map((hunk) => ({
     id: generateHunkId(),
     hunk,
-    status: 'pending' as const,
+    status: 'pending',
+    kind: 'content',
   }));
+
+  // An empty file creation/deletion has no textual diff. Represent the
+  // existence change as a synthetic hunk so it can still be reviewed.
+  if (hunks.length === 0 && baselineExists !== currentExists) {
+    hunks.push({
+      id: generateHunkId(),
+      hunk: {
+        oldStart: 1,
+        oldLines: 0,
+        newStart: 1,
+        newLines: 0,
+        lines: [],
+      },
+      status: 'pending',
+      kind: currentExists ? 'file-created' : 'file-deleted',
+    });
+  }
+
+  return hunks;
 }
 
 /**
