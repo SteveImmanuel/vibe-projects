@@ -12,9 +12,10 @@ The core idea: instead of accepting or rejecting an entire file's changes at onc
 - **Marketplace-publishable** — uses only stable, public VS Code APIs (no proposed APIs)
 - **Non-invasive** — no inline editor UI (no CodeLens, no decorations). All review happens in a dedicated sidebar panel + VS Code's native diff editor
 
-## Current state (v0.5.2)
+## Current state (v0.5.3)
 
 Working MVP. Core features implemented:
+- Tracking is opt-in and begins only after the user explicitly presses Start Tracking
 - Tracks file changes (create, modify, delete) with configurable include/exclude glob filters
 - Computes per-hunk diffs using the `diff` npm package
 - **Controls panel** (WebviewView) with Stop Tracking and bulk Accept/Reject buttons; manual Refresh lives in the Review view title
@@ -67,12 +68,12 @@ cherry-diff/
 ### Startup sequence
 
 1. `activate()` in `extension.ts` runs on `onStartupFinished`
-2. `BaselineService` is created with a session directory under `ExtensionContext.storageUri`
-3. `ChangeTracker.beginInitialization()` installs text-document and filesystem watchers before capture starts
-4. `captureFilteredBaselines()` finds included files and snapshots them as SHA-256-addressed blobs using the configured concurrency (default 12)
-5. Changes observed during capture are drained and recaptured; `finishInitialization()` then switches the existing watchers to normal tracking
-6. Virtual document providers, the Controls WebviewView, and Review TreeView are registered
-7. Commands and event listeners are wired up
+2. `BaselineService` is created with a session directory under `ExtensionContext.storageUri`, and stale session data is cleared
+3. Virtual document providers, the Controls WebviewView, Review TreeView, and Tracked Files TreeView are registered
+4. Commands and event listeners are wired up, but no file watchers or baselines are started automatically
+5. The user clicks **Start Tracking**, which calls `ChangeTracker.beginInitialization()` before capture starts
+6. `captureFilteredBaselines()` snapshots included files as SHA-256-addressed blobs using the configured concurrency (default 12)
+7. Changes observed during capture are drained and recaptured; `finishInitialization()` then switches the existing watchers to normal tracking
 
 ### Change detection flow
 
@@ -267,7 +268,7 @@ Default excludes cover: node_modules, .venv, __pycache__, .git, .hg, .svn, dist,
 
 ## Baseline model
 
-The baseline is **the file's content at the moment tracking was enabled** (extension startup by default). Contents live in extension storage as session-scoped blobs; only the lightweight index and baselines for files currently under review live in memory.
+The baseline is **the file's content at the moment the user explicitly starts tracking**. Tracking is disabled after activation until the user presses **Start Tracking**. Contents live in extension storage as session-scoped blobs; only the lightweight index and baselines for files currently under review live in memory.
 
 - **Accept** advances the baseline forward (baseline now includes the accepted change)
 - **Reject** does not change the baseline (the file is rewritten to remove the rejected change)

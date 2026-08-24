@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.3]
+
+### Changed
+- Tracking is disabled by default and starts only after explicit user action
+- Extension activation clears stale session data without installing watchers or capturing workspace files
+
 ## [0.5.2]
 
 ### Added

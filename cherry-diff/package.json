@@ -2,7 +2,7 @@
   "name": "cherry-diff",
   "displayName": "Cherry Diff",
   "description": "Per-hunk approve/reject UI for file edits.",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "publisher": "cherry-diff",
   "license": "MIT",
   "icon": "assets/icon.png",
