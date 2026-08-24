@@ -12,7 +12,7 @@ The core idea: instead of accepting or rejecting an entire file's changes at onc
 - **Marketplace-publishable** — uses only stable, public VS Code APIs (no proposed APIs)
 - **Non-invasive** — no inline editor UI (no CodeLens, no decorations). All review happens in a dedicated sidebar panel + VS Code's native diff editor
 
-## Current state (v0.5.0)
+## Current state (v0.5.1)
 
 Working MVP. Core features implemented:
 - Tracks file changes (create, modify, delete) with configurable include/exclude glob filters
@@ -225,7 +225,7 @@ Wiring and command registration. Notable details:
 - **`closeDiffTab(fsPath)`**: Finds the diff tab by matching the label pattern `"relativePath (Baseline ↔ Current)"` and closes it via `vscode.window.tabGroups.close()`.
 - **Context keys**: `cherryDiff.tracking` (controls play/stop button visibility), `cherryDiff.reviewActive`
 - **Initialization pipeline**: installs watchers first, clears the session blob store, finds and captures filtered files with bounded concurrency, drains paths changed during capture, then enables normal tracking
-- **`cherryDiff.resetBaseline`** command (labeled "Accept All" in UI): clears review, clears changed files, and recaptures baselines from current state
+- **Bulk resolution**: both Accept All and Reject All force a review refresh first so events waiting on the debounce timer are included. Accept All updates blobs only for changed files; it never rebuilds unchanged baselines. The legacy `cherryDiff.resetBaseline` ID is retained as a hidden alias for Accept All.
 
 ## VS Code extension manifest (package.json)
 
@@ -235,7 +235,6 @@ Wiring and command registration. Notable details:
 | `cherryDiff.startReview` | Start Review | `$(refresh)` | Controls webview |
 | `cherryDiff.enableTracking` | Enable Tracking | `$(play)` | Controls webview |
 | `cherryDiff.disableTracking` | Disable Tracking | `$(debug-stop)` | Controls webview |
-| `cherryDiff.resetBaseline` | Accept All | `$(discard)` | Controls webview |
 | `cherryDiff.editFilters` | Show Tracked Files | `$(filter)` | Controls webview |
 | `cherryDiff.acceptHunk` | Accept Hunk | `$(check)` | Hunk item inline |
 | `cherryDiff.rejectHunk` | Reject Hunk | `$(x)` | Hunk item inline |
@@ -271,7 +270,7 @@ The baseline is **the file's content at the moment tracking was enabled** (exten
 
 - **Accept** advances the baseline forward (baseline now includes the accepted change)
 - **Reject** does not change the baseline (the file is rewritten to remove the rejected change)
-- **Accept All** recaptures all file contents as-is, clearing all pending reviews
+- **Accept All** advances only changed-file baselines to their current states; unchanged baseline blobs are left untouched
 - **Disable tracking** clears all baselines
 - **Enable tracking** recaptures all baselines from current file state
 - Edits made while tracking is disabled are invisible (baked into the new baseline when re-enabled)

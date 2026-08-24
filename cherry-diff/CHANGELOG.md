@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.1]
+
+### Changed
+- Glob setting changes synchronize only newly included or excluded baselines
+- Bulk accept/reject emits a single review update after all changed files are resolved
+
+### Fixed
+- Accept All now updates only pending changed-file baselines instead of clearing and recapturing the entire workspace
+- Accept All and Reject All refresh pending filesystem events before resolving changes
+- Resetting visual file selections preserves unrelated pending reviews and existing baselines
+
 ## [0.5.0]
 
 ### Added
