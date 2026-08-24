@@ -313,10 +313,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     treeView
   );
 
-  // Install watchers before snapshotting so writes during initialization can
-  // be recaptured before normal tracking begins. Event listeners are already
-  // registered when normal tracking is enabled, avoiding a post-init gap.
-  await initializeTracking(controlsProvider);
+  // Tracking is opt-in. Discard any previous session data, but do not install
+  // watchers or capture workspace files until the user explicitly starts it.
+  await baselineService.clearBaselines();
+  await vscode.commands.executeCommand('setContext', 'cherryDiff.tracking', false);
+  await vscode.commands.executeCommand('setContext', 'cherryDiff.reviewActive', false);
+  controlsProvider.updateView();
   updateBadge();
 }
 
