@@ -25,6 +25,8 @@ export class TrackingController implements vscode.Disposable {
   private initializationPromise: Promise<boolean> | undefined;
   private readonly reviewDebounce = new Debouncer(REVIEW_DEBOUNCE_MS);
   private readonly filterDebounce = new Debouncer(FILTER_DEBOUNCE_MS);
+  private filtersDirty = false;
+  private appliedInclusion: (uri: vscode.Uri) => boolean = () => false;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly _onDidChangeState = new vscode.EventEmitter<void>();
   readonly onDidChangeState = this._onDidChangeState.event;
@@ -87,13 +89,19 @@ export class TrackingController implements vscode.Disposable {
     });
   }
 
-  refreshReview(): Promise<number> {
+  refreshReview(synchronizeFilters = true): Promise<number> {
+    const generation = this.generation;
     return this.operations.run(async () => {
-      if (!this.changes.isTracking()) {
+      if (!this.changes.isTracking() || this.isCancelled(generation)) {
         return this.reviews.getPendingHunks().length;
       }
-      await this.expandDirectoryChanges(this.generation);
-      return this.reviews.refreshDirty();
+      if (synchronizeFilters) {
+        await this.flushFilters(generation);
+        if (this.isCancelled(generation)) {
+          return this.reviews.getPendingHunks().length;
+        }
+      }
+      return this.refreshPending(generation);
     });
   }
 
@@ -111,13 +119,19 @@ export class TrackingController implements vscode.Disposable {
 
   resolveAll(resolution: Resolution): Promise<void> {
     this.reviewDebounce.cancel();
+    const generation = this.generation;
     return this.operations.run(async () => {
-      if (!this.changes.isTracking()) {
+      if (!this.changes.isTracking() || this.isCancelled(generation)) {
         return;
       }
-      await this.expandDirectoryChanges(this.generation);
-      await this.reviews.refreshDirty();
-      await this.reviews.resolveAll(resolution);
+      await this.flushFilters(generation);
+      if (this.isCancelled(generation)) {
+        return;
+      }
+      await this.refreshPending(generation);
+      if (!this.isCancelled(generation)) {
+        await this.reviews.resolveAll(resolution);
+      }
     });
   }
 
@@ -153,6 +167,8 @@ export class TrackingController implements vscode.Disposable {
 
     try {
       this.reviews.clearReview();
+      this.filtersDirty = false;
+      this.appliedInclusion = this.filters.captureInclusion();
       await this.baselines.clearBaselines();
 
       await this.withCaptureProgress(
@@ -219,6 +235,10 @@ export class TrackingController implements vscode.Disposable {
       return;
     }
 
+    const previousInclusion = this.appliedInclusion;
+    const nextInclusion = this.filters.captureInclusion();
+    const captured: vscode.Uri[] = [];
+    this.filtersDirty = false;
     for (const uri of this.baselines.getBaselineUris()) {
       if (!this.filters.isIncluded(uri)) {
         this.baselines.removeBaseline(uri);
@@ -237,11 +257,26 @@ export class TrackingController implements vscode.Disposable {
           progress,
           token,
           () => this.isCancelled(generation),
-          true
+          (uri) => {
+            if (this.baselines.hasBaseline(uri) || !nextInclusion(uri)) {
+              return false;
+            }
+            if (previousInclusion(uri)) {
+              this.changes.markChange(uri, 'created');
+              return false;
+            }
+            captured.push(uri);
+            return true;
+          }
         )
       );
-      await this.expandDirectoryChanges(generation);
-      await this.reviews.refreshDirty();
+      if (!this.isCancelled(generation)) {
+        this.appliedInclusion = nextInclusion;
+        for (const uri of captured) {
+          this.changes.markChange(uri);
+        }
+        await this.refreshPending(generation);
+      }
     } catch (error) {
       if (!(error instanceof CaptureCancelledError) && !this.isCancelled(generation)) {
         console.error('[Cherry Diff] Failed to synchronize filters', error);
@@ -373,12 +408,20 @@ export class TrackingController implements vscode.Disposable {
       return;
     }
 
+    this.filtersDirty = true;
     const generation = this.generation;
     this.filterDebounce.schedule(() => {
-      void this.operations.run(() => this.synchronizeFilters(generation)).catch((error) => {
+      void this.operations.run(() => this.flushFilters(generation)).catch((error) => {
         this.reportOperationError('apply tracked-file filters', error);
       });
     });
+  }
+
+  private async flushFilters(generation: number): Promise<void> {
+    while (this.filtersDirty && !this.isCancelled(generation)) {
+      this.filterDebounce.cancel();
+      await this.synchronizeFilters(generation);
+    }
   }
 
   private scheduleReview(): void {
@@ -386,10 +429,18 @@ export class TrackingController implements vscode.Disposable {
       return;
     }
     this.reviewDebounce.schedule(() => {
-      void this.refreshReview().catch((error) => {
+      void this.refreshReview(false).catch((error) => {
         this.reportOperationError('refresh the review', error);
       });
     });
+  }
+
+  private async refreshPending(generation: number): Promise<number> {
+    await this.expandDirectoryChanges(generation);
+    if (!this.isCancelled(generation)) {
+      return this.reviews.refreshDirty();
+    }
+    return this.reviews.getPendingHunks().length;
   }
 
   private isCancelled(generation: number): boolean {
@@ -398,11 +449,14 @@ export class TrackingController implements vscode.Disposable {
 
   private enqueueResolution(operation: () => Promise<boolean>): Promise<boolean> {
     const generation = this.generation;
-    return this.operations.run(() => (
-      this.changes.isTracking() && generation === this.generation
+    return this.operations.run(async () => {
+      if (this.filtersDirty) {
+        await this.flushFilters(generation);
+      }
+      return this.changes.isTracking() && generation === this.generation
         ? operation()
-        : Promise.resolve(false)
-    ));
+        : false;
+    });
   }
 
   private reportOperationError(action: string, error: unknown): void {

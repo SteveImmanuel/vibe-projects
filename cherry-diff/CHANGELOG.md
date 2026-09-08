@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Filter changes preserve pending new files and capture baselines only for newly included paths
 - Folder create/delete events reach included children even when the folder itself does not match the filters
 - Coalesced folder deletion and recreation still review replacement contents
 

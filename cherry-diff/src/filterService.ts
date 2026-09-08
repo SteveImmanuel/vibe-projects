@@ -60,31 +60,20 @@ export class FilterService implements vscode.Disposable {
 
   isIncluded(uri: vscode.Uri, asDirectory = false): boolean {
     const location = this.getLocation(uri);
-    if (!location) {
-      return false;
-    }
+    return this.matchesLocation(location, asDirectory);
+  }
 
-    const pathToMatch = asDirectory
-      ? `${location.path ? `${location.path}/` : ''}__cherry_diff_descendant__`
-      : location.path;
-    const override = this.getNearestOverride(location.root, pathToMatch);
-    if (override) {
-      if (!override.included) {
-        return false;
-      }
-      // A checked file is a deliberate inclusion of that exact path. A checked
-      // ancestor directory re-includes its subtree, but by default it does not
-      // pull back in paths that excludePaths deliberately filters out.
-      if (this.checkedDirectoriesOverrideExcludes
-        || (!asDirectory && override.path === location.path)) {
-        return true;
-      }
-      return !this.excludeMatchers.some((matcher) => matcher.match(pathToMatch));
-    }
-    if (this.excludeMatchers.some((matcher) => matcher.match(pathToMatch))) {
-      return false;
-    }
-    return this.includeMatchers.some((matcher) => matcher.match(pathToMatch));
+  captureInclusion(): (uri: vscode.Uri) => boolean {
+    const roots = new Set(vscode.workspace.workspaceFolders?.map((folder) => folder.uri.toString()));
+    const overrides = new Map(this.overrides);
+    const includes = this.includeMatchers;
+    const excludes = this.excludeMatchers;
+    const overrideExcludes = this.checkedDirectoriesOverrideExcludes;
+    return (uri) => {
+      const location = this.getLocation(uri);
+      return !!location && roots.has(location.root)
+        && this.matchesLocation(location, false, overrides, includes, excludes, overrideExcludes);
+    };
   }
 
   mayContainIncluded(uri: vscode.Uri): boolean {
@@ -108,6 +97,40 @@ export class FilterService implements vscode.Disposable {
     const descendant = `${location.path ? `${location.path}/` : ''}__cherry_diff_descendant__`;
     return !this.excludeMatchers.some((matcher) => matcher.match(descendant))
       && (override?.included === true || this.includeMatchers.length > 0);
+  }
+
+  private matchesLocation(
+    location: FilterLocation | undefined,
+    asDirectory: boolean,
+    overrides = this.overrides,
+    includes = this.includeMatchers,
+    excludes = this.excludeMatchers,
+    overrideExcludes = this.checkedDirectoriesOverrideExcludes
+  ): boolean {
+    if (!location) {
+      return false;
+    }
+
+    const pathToMatch = asDirectory
+      ? `${location.path ? `${location.path}/` : ''}__cherry_diff_descendant__`
+      : location.path;
+    const override = this.getNearestOverride(location.root, pathToMatch, overrides);
+    if (override) {
+      if (!override.included) {
+        return false;
+      }
+      // Exact file selections override excludes; checked ancestors respect
+      // them unless checkedDirectoriesOverrideExcludes is enabled.
+      if (overrideExcludes
+        || (!asDirectory && override.path === location.path)) {
+        return true;
+      }
+      return !excludes.some((matcher) => matcher.match(pathToMatch));
+    }
+    if (excludes.some((matcher) => matcher.match(pathToMatch))) {
+      return false;
+    }
+    return includes.some((matcher) => matcher.match(pathToMatch));
   }
 
   getLocation(uri: vscode.Uri): FilterLocation | undefined {
@@ -221,10 +244,14 @@ export class FilterService implements vscode.Disposable {
     );
   }
 
-  private getNearestOverride(root: string, relativePath: string): StoredPathOverride | undefined {
+  private getNearestOverride(
+    root: string,
+    relativePath: string,
+    overrides = this.overrides
+  ): StoredPathOverride | undefined {
     let candidate: string | undefined = normalizeFilterPath(relativePath);
     while (candidate !== undefined) {
-      const override = this.overrides.get(getOverrideKey(root, candidate));
+      const override = overrides.get(getOverrideKey(root, candidate));
       if (override) {
         return override;
       }

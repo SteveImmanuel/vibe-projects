@@ -14,7 +14,7 @@ Core principles:
 
 ## Current development state
 
-The package version is `0.7.1`. Unreleased fixes handle folder events before filtering their children.
+The package version is `0.7.1`. Unreleased fixes preserve new-file reviews during filter synchronization and handle folder events before filtering their children.
 
 Implemented behavior:
 
@@ -61,7 +61,7 @@ test/
 └── reviewManager.test.js
 ```
 
-`trackingController.test.js` covers operation ordering. `trackingRecovery.test.js` uses the shared in-memory workspace in `test/helpers/workspace.js` to cover directory events and filtered descendants.
+`trackingController.test.js` covers operation ordering. `trackingRecovery.test.js` uses the shared in-memory workspace in `test/helpers/workspace.js` to cover directory events, filter synchronization, and filtered descendants.
 
 ## Core invariants
 
@@ -135,6 +135,8 @@ Visual selections are stored in `ExtensionContext.workspaceState`, not `.vscode/
 Override keys include the workspace-root URI, so equal relative paths in separate workspace roots remain independent. Directory selections remove redundant descendant overrides. Symbolic-link directories are shown but never recursively traversed.
 
 Changing include/exclude settings while tracking performs serialized incremental baseline synchronization. Changing filters during initial preparation cancels the incomplete session and requires tracking to be started again.
+
+Synchronization uses a snapshot of the previous inclusion rules. A missing baseline for a previously included path remains a new-file change, even when its creation event was missed. Only newly included paths get captured. Explicit refresh and resolution flush pending filter changes first.
 
 ## Main flows
 

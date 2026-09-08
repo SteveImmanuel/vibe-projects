@@ -27,9 +27,29 @@ export class BaselineCaptureService {
     progress: CaptureProgress,
     token: vscode.CancellationToken,
     isCancelled: () => boolean,
-    onlyMissing = false
+    shouldCapture: (uri: vscode.Uri) => boolean = () => true
   ): Promise<void> {
-    progress.report({ message: 'Finding included files' });
+    const files = await this.collectFilteredFiles(progress, token, isCancelled);
+    const openKeys = new Set(vscode.workspace.textDocuments.map((document) => document.uri.toString()));
+    const openFiles: vscode.Uri[] = [];
+    const otherFiles: vscode.Uri[] = [];
+    for (const uri of files) {
+      if (shouldCapture(uri)) {
+        (openKeys.has(uri.toString()) ? openFiles : otherFiles).push(uri);
+      }
+    }
+
+    const candidates = [...openFiles, ...otherFiles];
+    progress.report({ message: `Capturing ${candidates.length.toLocaleString()} files` });
+    await this.captureUntilStable(candidates, progress, token, isCancelled);
+  }
+
+  async collectFilteredFiles(
+    progress: CaptureProgress | undefined,
+    token: vscode.CancellationToken | undefined,
+    isCancelled: () => boolean
+  ): Promise<vscode.Uri[]> {
+    progress?.report({ message: 'Finding included files' });
     const files = new Map<string, vscode.Uri>();
     const excludePattern = buildExcludePattern(this.filters.getExcludePatterns());
 
@@ -59,22 +79,8 @@ export class BaselineCaptureService {
       }
     }
 
-    const openKeys = new Set(
-      vscode.workspace.textDocuments.map((document) => document.uri.toString())
-    );
-    const openFiles: vscode.Uri[] = [];
-    const otherFiles: vscode.Uri[] = [];
-    for (const uri of files.values()) {
-      if (!this.filters.isIncluded(uri)
-        || (onlyMissing && this.baselines.hasBaseline(uri))) {
-        continue;
-      }
-      (openKeys.has(uri.toString()) ? openFiles : otherFiles).push(uri);
-    }
-
-    const candidates = [...openFiles, ...otherFiles];
-    progress.report({ message: `Capturing ${candidates.length.toLocaleString()} files` });
-    await this.captureUntilStable(candidates, progress, token, isCancelled);
+    this.throwIfCancelled(token, isCancelled);
+    return [...files.values()].filter((uri) => this.filters.isIncluded(uri));
   }
 
   async captureUntilStable(

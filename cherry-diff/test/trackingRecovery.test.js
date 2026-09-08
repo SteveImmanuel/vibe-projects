@@ -8,6 +8,69 @@ function fixture(t, includes) {
   return f;
 }
 
+for (const reviewed of [false, true]) {
+  test(`unrelated filter changes preserve ${reviewed ? 'reviewed' : 'unreviewed'} new files`, async (t) => {
+    const f = fixture(t);
+    await f.controller.startTracking();
+    const uri = Uri.file('/workspace/new.ts');
+    f.put(uri, 'new content\n');
+    f.emit(uri, 'created');
+    if (reviewed) await f.advance(800);
+
+    await f.filters.updateOverrides([{ uri: Uri.file('/workspace/unrelated'), included: false, recursive: true }]);
+    await f.advance(300);
+
+    assert.equal(f.filters.isIncluded(uri), true);
+    assert.equal(f.baselines.hasBaseline(uri), false);
+    assert.equal(f.reviews.getFileReview(uri.toString()).baseline.exists, false);
+    assert.equal(f.reviews.getFileReview(uri.toString()).current.text, 'new content\n');
+  });
+}
+
+test('newly included files receive baselines while previously included new files remain pending', async (t) => {
+  const f = fixture(t);
+  const newlyIncluded = Uri.file('/workspace/excluded.ts');
+  const newFile = Uri.file('/workspace/new.ts');
+  await f.filters.updateOverrides([{ uri: newlyIncluded, included: false, recursive: false }]);
+  f.put(newlyIncluded, 'existing excluded content\n');
+  await f.controller.startTracking();
+  f.put(newFile, 'new content\n');
+  // No event: changing a selection must preserve even a missed creation.
+  await f.filters.clearOverrides();
+  await f.advance(300);
+
+  assert.equal((await f.baselines.getSnapshot(newlyIncluded)).text, 'existing excluded content\n');
+  assert.equal(f.reviews.getFileReview(newlyIncluded.toString()), undefined);
+  assert.equal(f.reviews.getFileReview(newFile.toString()).baseline.exists, false);
+});
+
+test('manual refresh applies pending filter changes before reviewing newly included files', async (t) => {
+  const f = fixture(t);
+  const uri = Uri.file('/workspace/excluded.ts');
+  f.put(uri, 'existing\n');
+  await f.filters.updateOverrides([{ uri, included: false, recursive: false }]);
+  await f.controller.startTracking();
+  await f.filters.clearOverrides();
+  await f.controller.refreshReview();
+  assert.equal((await f.baselines.getSnapshot(uri)).text, 'existing\n');
+  assert.equal(f.reviews.getAllFileReviews().size, 0);
+});
+
+test('filter synchronization clears a premature review of a newly included file', async (t) => {
+  const f = fixture(t);
+  const uri = Uri.file('/workspace/excluded.ts');
+  f.put(uri, 'existing\n');
+  await f.filters.updateOverrides([{ uri, included: false, recursive: false }]);
+  await f.controller.startTracking();
+  await f.filters.clearOverrides();
+  f.emit(uri, 'changed');
+  await f.controller.refreshReview(false);
+  assert.equal(f.reviews.getFileReview(uri.toString()).baseline.exists, false);
+  await f.advance(300);
+  assert.equal((await f.baselines.getSnapshot(uri)).text, 'existing\n');
+  assert.equal(f.reviews.getAllFileReviews().size, 0);
+});
+
 for (const mode of ['glob', 'checked-file']) {
   test(`parent-only deletion reviews an included child selected by ${mode}`, async (t) => {
     const f = fixture(t, mode === 'glob' ? ['**/*.ts'] : ['**/*']);
@@ -87,4 +150,17 @@ test('coalesced directory replacement reviews modified, deleted, and new childre
   assert.equal(f.reviews.getFileReview(deleted.toString()).current.exists, false);
   assert.equal(f.reviews.getFileReview(created.toString()).baseline.exists, false);
   assert.equal(f.reviews.getAllFileReviews().size, 3);
+});
+
+test('ordinary file events refresh incrementally without running discovery', async (t) => {
+  const f = fixture(t);
+  const uri = Uri.file('/workspace/app.ts');
+  f.put(uri, 'original\n');
+  await f.controller.startTracking();
+  const discoveries = f.getDiscoveries();
+  f.put(uri, 'edit\n');
+  f.emit(uri, 'changed');
+  await f.advance(800);
+  assert.equal(f.reviews.getFileReview(uri.toString()).current.text, 'edit\n');
+  assert.equal(f.getDiscoveries(), discoveries);
 });
