@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:record/record.dart';
@@ -25,13 +24,15 @@ class DeviceMicrophone implements MicrophoneInput {
   Future<Stream<Uint8List>> start() async {
     final recorder = _recorder ??= AudioRecorder();
     if (!await recorder.hasPermission()) throw MicrophonePermissionDenied();
-    final source = await recorder.startStream(const RecordConfig(
-      encoder: AudioEncoder.pcm16bits,
-      sampleRate: tunerSampleRate,
-      numChannels: 1,
-      streamBufferSize: 2048,
-      androidConfig: AndroidRecordConfig(manageBluetooth: false, audioSource: AndroidAudioSource.mic),
-    ));
+    final source = await recorder.startStream(
+      const RecordConfig(
+        encoder: AudioEncoder.pcm16bits,
+        sampleRate: tunerSampleRate,
+        numChannels: 1,
+        streamBufferSize: 2048,
+        androidConfig: AndroidRecordConfig(manageBluetooth: false, audioSource: AndroidAudioSource.mic),
+      ),
+    );
     final stream = StreamController<Uint8List>.broadcast();
     _stream = stream;
     _audio = source.listen(stream.add, onError: stream.addError, onDone: stream.close);

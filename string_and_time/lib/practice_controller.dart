@@ -7,9 +7,8 @@ import 'audio/click_track.dart';
 import 'audio/pitch_detector.dart';
 
 class PracticeController extends ChangeNotifier {
-  PracticeController({required MicrophoneInput microphone, required ClickOutput clicks})
-    : _microphone = microphone, _clicks = clicks {
-    _beatSubscription = _clicks.beats.listen((value) {
+  PracticeController({required this.microphone, required this.clicks}) {
+    _beatSubscription = clicks.beats.listen((value) {
       if (value == null) {
         playing = false;
         beat = null;
@@ -20,8 +19,8 @@ class PracticeController extends ChangeNotifier {
     }, onError: (Object error) => _audioError('Playback interrupted. Tap Start to try again.'));
   }
 
-  final MicrophoneInput _microphone;
-  final ClickOutput _clicks;
+  final MicrophoneInput microphone;
+  final ClickOutput clicks;
   final TapTempo _tapTempo = TapTempo();
   final Stopwatch _clock = Stopwatch()..start();
   final List<double> _recentPitches = [];
@@ -104,28 +103,35 @@ class PracticeController extends ChangeNotifier {
     if (!_foreground || tab != 0) return;
     await _stopAudio();
     final session = _epoch;
-    final stream = await _microphone.start();
+    final stream = await microphone.start();
     if (session != _epoch || !_foreground || _disposed) {
-      await _microphone.stop();
+      await microphone.stop();
       return;
     }
     listening = true;
     final decoder = PcmFrameDecoder();
-    _microphoneSubscription = stream.listen((bytes) {
-      for (final frame in decoder.add(bytes)) {
-        if (_analyzing || !listening) continue;
-        _analyzing = true;
-        compute(detectPitch, frame).then((pitch) {
-          if (!_disposed && listening && session == _epoch) _acceptPitch(pitch);
-        }).catchError((Object error) {
-          if (session == _epoch) _audioError('Could not analyze the microphone. Tap Listen to try again.');
-        }).whenComplete(() => _analyzing = false);
-      }
-    }, onError: (Object error) {
-      if (session == _epoch) _audioError('Microphone interrupted. Tap Listen to try again.');
-    }, onDone: () {
-      if (session == _epoch && listening) _audioError('Microphone stopped. Tap Listen to try again.');
-    });
+    _microphoneSubscription = stream.listen(
+      (bytes) {
+        for (final frame in decoder.add(bytes)) {
+          if (_analyzing || !listening) continue;
+          _analyzing = true;
+          compute(detectPitch, frame)
+              .then((pitch) {
+                if (!_disposed && listening && session == _epoch) _acceptPitch(pitch);
+              })
+              .catchError((Object error) {
+                if (session == _epoch) _audioError('Could not analyze the microphone. Tap Listen to try again.');
+              })
+              .whenComplete(() => _analyzing = false);
+        }
+      },
+      onError: (Object error) {
+        if (session == _epoch) _audioError('Microphone interrupted. Tap Listen to try again.');
+      },
+      onDone: () {
+        if (session == _epoch && listening) _audioError('Microphone stopped. Tap Listen to try again.');
+      },
+    );
   });
 
   void _acceptPitch(double? pitch) {
@@ -146,10 +152,12 @@ class PracticeController extends ChangeNotifier {
 
   void _audioError(String message) {
     _epoch++;
-    unawaited(_enqueue(() async {
-      error = message;
-      await _stopAudio();
-    }));
+    unawaited(
+      _enqueue(() async {
+        error = message;
+        await _stopAudio();
+      }),
+    );
   }
 
   Future<void> toggleMetronome() => _enqueue(() async {
@@ -163,9 +171,9 @@ class PracticeController extends ChangeNotifier {
   Future<void> _startClicks() async {
     if (!_foreground || _disposed) return;
     final session = _epoch;
-    await _clicks.start(bpm: bpm, beats: beatsPerBar, accent: accent, volume: volume);
+    await clicks.start(bpm: bpm, beats: beatsPerBar, accent: accent, volume: volume);
     if (session != _epoch || !_foreground || _disposed) {
-      await _clicks.stop();
+      await clicks.stop();
       return;
     }
     playing = true;
@@ -215,9 +223,9 @@ class PracticeController extends ChangeNotifier {
     await _microphoneSubscription?.cancel();
     _microphoneSubscription = null;
     try {
-      await _microphone.stop();
+      await microphone.stop();
     } finally {
-      await _clicks.stop();
+      await clicks.stop();
     }
   }
 
@@ -234,15 +242,19 @@ class PracticeController extends ChangeNotifier {
     _disposed = true;
     _epoch++;
     _stalePitch?.cancel();
-    unawaited(_pending.then((_) async {
-      await _beatSubscription.cancel();
-      try {
-        await _stopAudio();
-      } finally {
-        await _microphone.dispose();
-        await _clicks.dispose();
-      }
-    }).catchError((Object error) => debugPrint('Audio cleanup failed: $error')));
+    unawaited(
+      _pending
+          .then((_) async {
+            await _beatSubscription.cancel();
+            try {
+              await _stopAudio();
+            } finally {
+              await microphone.dispose();
+              await clicks.dispose();
+            }
+          })
+          .catchError((Object error) => debugPrint('Audio cleanup failed: $error')),
+    );
     super.dispose();
   }
 }
