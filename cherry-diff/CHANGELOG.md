@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Folder create/delete events reach included children even when the folder itself does not match the filters
+- Coalesced folder deletion and recreation still review replacement contents
+
 ## [0.7.1]
 
 ### Added

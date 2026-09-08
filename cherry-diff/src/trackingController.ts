@@ -299,7 +299,9 @@ export class TrackingController implements vscode.Disposable {
 
     for (const change of pendingChanges) {
       if (!await this.isDirectoryChange(change.uri)) {
-        uris.set(change.key, change.uri);
+        if (this.filters.isIncluded(change.uri)) {
+          uris.set(change.key, change.uri);
+        }
         continue;
       }
 
@@ -330,10 +332,9 @@ export class TrackingController implements vscode.Disposable {
       if (!await this.isDirectoryChange(change.uri)) {
         continue;
       }
-      if (change.kind === 'changed') {
-        // Child file events carry the actionable path. Some providers also
-        // emit a parent-directory change; rescanning its whole subtree would
-        // turn one edit into an O(workspace) review.
+      if (!change.structural) {
+        // Ordinary directory updates accompany child events. Structural
+        // events must still expand after a delete/create pair is coalesced.
         this.changes.acknowledge(change.key, change.revision);
         continue;
       }

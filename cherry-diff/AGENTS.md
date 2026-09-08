@@ -14,7 +14,7 @@ Core principles:
 
 ## Current development state
 
-The latest committed version is `0.7.0`, a simplification pass over 0.6.0's safety hardening: dead code, legacy migration paths, backward-compatibility shims, and duplicated primitives were removed without behavior changes.
+The package version is `0.7.1`. Unreleased fixes handle folder events before filtering their children.
 
 Implemented behavior:
 
@@ -61,6 +61,8 @@ test/
 └── reviewManager.test.js
 ```
 
+`trackingController.test.js` covers operation ordering. `trackingRecovery.test.js` uses the shared in-memory workspace in `test/helpers/workspace.js` to cover directory events and filtered descendants.
+
 ## Core invariants
 
 ### Tracking session
@@ -102,6 +104,7 @@ Binary and unsupported files receive one whole-file review hunk. They are never 
 - Before accepting or rejecting, the current file is reread and compared with the reviewed snapshot.
 - If the file changed after review preparation, the operation is refused and the review is refreshed.
 - Failed edits or deletions leave the review pending.
+- Create/delete events retain their structural origin when coalesced and reach directory expansion before file inclusion checks.
 
 ### Operation serialization
 

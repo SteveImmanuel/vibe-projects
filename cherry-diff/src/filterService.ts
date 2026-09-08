@@ -87,6 +87,29 @@ export class FilterService implements vscode.Disposable {
     return this.includeMatchers.some((matcher) => matcher.match(pathToMatch));
   }
 
+  mayContainIncluded(uri: vscode.Uri): boolean {
+    const location = this.getLocation(uri);
+    if (!location) {
+      return false;
+    }
+    for (const override of this.overrides.values()) {
+      if (override.included && override.root === location.root && isDescendant(override.path, location.path)) {
+        return true;
+      }
+    }
+
+    const override = this.getNearestOverride(location.root, location.path);
+    if (override && !override.included) {
+      return false;
+    }
+    if (override?.included && this.checkedDirectoriesOverrideExcludes) {
+      return true;
+    }
+    const descendant = `${location.path ? `${location.path}/` : ''}__cherry_diff_descendant__`;
+    return !this.excludeMatchers.some((matcher) => matcher.match(descendant))
+      && (override?.included === true || this.includeMatchers.length > 0);
+  }
+
   getLocation(uri: vscode.Uri): FilterLocation | undefined {
     const folder = vscode.workspace.getWorkspaceFolder(uri);
     if (!folder) {

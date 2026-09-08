@@ -8,6 +8,7 @@ export interface TrackedChange {
   uri: vscode.Uri;
   kind: ChangeKind;
   revision: number;
+  structural: boolean;
 }
 
 /** Watches workspace resources and records revisioned dirty paths. */
@@ -61,7 +62,8 @@ export class ChangeTracker implements vscode.Disposable {
     if (!this.initializing && !this.tracking) {
       return undefined;
     }
-    if (!this.shouldTrack(uri)) {
+    if (!this.shouldTrack(uri)
+      && (kind === 'changed' || !this.filters.mayContainIncluded(uri))) {
       return undefined;
     }
 
@@ -73,6 +75,7 @@ export class ChangeTracker implements vscode.Disposable {
       uri,
       kind: mergeChangeKinds(previous?.kind, kind),
       revision: this.nextRevision++,
+      structural: previous?.structural === true || kind !== 'changed',
     };
     target.set(key, change);
 
@@ -110,7 +113,7 @@ export class ChangeTracker implements vscode.Disposable {
   }
 
   shouldTrack(uri: vscode.Uri): boolean {
-    return this.filters.isIncluded(uri) || this.filters.isIncluded(uri, true);
+    return this.filters.isIncluded(uri);
   }
 
   isTracking(): boolean {

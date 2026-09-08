@@ -125,7 +125,9 @@ export class BaselineCaptureService {
         const isDirectory = (stat.type & vscode.FileType.Directory) !== 0;
         const isSymbolicLink = (stat.type & vscode.FileType.SymbolicLink) !== 0;
         if (isDirectory && !isSymbolicLink) {
-          directories.push(root);
+          if (this.filters.mayContainIncluded(root)) {
+            directories.push(root);
+          }
         } else if (!isDirectory) {
           files.set(root.toString(), root);
         }
@@ -151,7 +153,9 @@ export class BaselineCaptureService {
         const isDirectory = (type & vscode.FileType.Directory) !== 0;
         const isSymbolicLink = (type & vscode.FileType.SymbolicLink) !== 0;
         if (isDirectory && !isSymbolicLink) {
-          directories.push(uri);
+          if (this.filters.mayContainIncluded(uri)) {
+            directories.push(uri);
+          }
         } else if (!isDirectory) {
           files.set(uri.toString(), uri);
         }
