@@ -14,7 +14,7 @@ Core principles:
 
 ## Current development state
 
-The package version is `0.7.1`. Unreleased fixes add missed-event recovery, preserve new-file reviews during filter synchronization, and handle folder events before filtering their children.
+The package version is `0.7.2`. This release adds missed-event recovery, preserves new-file reviews during filter synchronization, and handles folder events before filtering their children.
 
 Implemented behavior:
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.7.2]
 
 ### Fixed
 - Filter changes preserve pending new files and capture baselines only for newly included paths
