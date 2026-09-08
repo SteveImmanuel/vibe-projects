@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:string_and_time/main.dart';
-import 'package:string_and_time/practice_controller.dart';
+import 'package:fretmate/main.dart';
+import 'package:fretmate/practice_controller.dart';
 
 import 'audio_fakes.dart';
 
@@ -11,7 +11,7 @@ void main() {
     final clicks = FakeClicks();
     final controller = PracticeController(microphone: microphone, clicks: clicks);
     addTearDown(controller.dispose);
-    await tester.pumpWidget(StringAndTimeApp(controller: controller));
+    await tester.pumpWidget(FretmateApp(controller: controller));
 
     expect(find.text('Find your sound.'), findsOneWidget);
     expect(microphone.starts, 0);
@@ -61,7 +61,7 @@ void main() {
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     final controller = PracticeController(microphone: FakeMicrophone(), clicks: FakeClicks());
     addTearDown(controller.dispose);
-    await tester.pumpWidget(StringAndTimeApp(controller: controller));
+    await tester.pumpWidget(FretmateApp(controller: controller));
     await tester.ensureVisible(find.text('Listen & tune'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);

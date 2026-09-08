@@ -3,8 +3,8 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:string_and_time/audio/pitch_detector.dart';
-import 'package:string_and_time/practice_controller.dart';
+import 'package:fretmate/audio/pitch_detector.dart';
+import 'package:fretmate/practice_controller.dart';
 
 import 'audio_fakes.dart';
 

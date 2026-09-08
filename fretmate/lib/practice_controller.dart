@@ -63,7 +63,7 @@ class PracticeController extends ChangeNotifier {
       try {
         if (!_disposed) await action();
       } on MicrophonePermissionDenied {
-        error = 'Microphone access is needed to tune. Allow it when prompted, or enable it in Android Settings → Apps → String & Time → Permissions.';
+        error = 'Microphone access is needed to tune. Allow it when prompted, or enable it in Android Settings → Apps → Fretmate → Permissions.';
         await _recover();
       } catch (_) {
         error = 'Audio is unavailable. Close other audio apps and try again.';
@@ -80,7 +80,7 @@ class PracticeController extends ChangeNotifier {
     try {
       await _stopAudio();
     } catch (_) {
-      error = 'Audio could not be released. Close and reopen String & Time.';
+      error = 'Audio could not be released. Close and reopen Fretmate.';
     }
   }
 

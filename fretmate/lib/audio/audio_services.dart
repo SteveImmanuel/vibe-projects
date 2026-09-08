@@ -78,7 +78,7 @@ class AndroidClickOutput implements ClickOutput {
     });
   }
 
-  static const _channel = MethodChannel('id.steveimm.string_and_time/metronome');
+  static const _channel = MethodChannel('id.steveimm.fretmate/metronome');
   final _beats = StreamController<int?>.broadcast();
   bool _started = false;
 

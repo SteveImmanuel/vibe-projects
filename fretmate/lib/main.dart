@@ -9,11 +9,11 @@ import 'ui/tuner_view.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const StringAndTimeApp());
+  runApp(const FretmateApp());
 }
 
-class StringAndTimeApp extends StatelessWidget {
-  const StringAndTimeApp({super.key, this.controller});
+class FretmateApp extends StatelessWidget {
+  const FretmateApp({super.key, this.controller});
 
   final PracticeController? controller;
 
@@ -22,7 +22,7 @@ class StringAndTimeApp extends StatelessWidget {
     const ink = Color(0xFF203B36);
     final scheme = ColorScheme.fromSeed(seedColor: const Color(0xFF286957), surface: const Color(0xFFF8F7F2));
     return MaterialApp(
-      title: 'String & Time',
+      title: 'Fretmate',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: scheme,
@@ -95,17 +95,17 @@ class _PracticeScreenState extends State<PracticeScreen> with WidgetsBindingObse
         title: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('STRING & TIME', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 2.2)),
+            Text('FRETMATE', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 2.2)),
             SizedBox(height: 4),
             Text('A little practice, every day.', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w400)),
           ],
         ),
         actions: [
           IconButton(
-            tooltip: 'About String & Time',
+            tooltip: 'About Fretmate',
             onPressed: () => showAboutDialog(
               context: context,
-              applicationName: 'String & Time',
+              applicationName: 'Fretmate',
               applicationVersion: '1.0.0',
               children: const [
                 Text(

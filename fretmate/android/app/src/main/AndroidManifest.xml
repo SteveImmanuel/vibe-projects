@@ -2,7 +2,7 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <application
-        android:label="String &amp; Time"
+        android:label="Fretmate"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

@@ -1,4 +1,4 @@
-package id.steveimm.string_and_time
+package id.steveimm.fretmate
 
 import android.content.Context
 import android.media.AudioAttributes
@@ -13,7 +13,7 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 class MetronomeAudio(context: Context, messenger: BinaryMessenger) : MethodChannel.MethodCallHandler {
-    private val channel = MethodChannel(messenger, "id.steveimm.string_and_time/metronome")
+    private val channel = MethodChannel(messenger, "id.steveimm.fretmate/metronome")
     private val handler = Handler(Looper.getMainLooper())
     private val audioManager = context.getSystemService(AudioManager::class.java)
     private val attributes = AudioAttributes.Builder()

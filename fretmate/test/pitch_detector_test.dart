@@ -2,7 +2,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:string_and_time/audio/pitch_detector.dart';
+import 'package:fretmate/audio/pitch_detector.dart';
 
 void main() {
   for (final string in standardStrings) {

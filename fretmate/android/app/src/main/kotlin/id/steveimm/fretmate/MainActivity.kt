@@ -1,4 +1,4 @@
-package id.steveimm.string_and_time
+package id.steveimm.fretmate
 
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine

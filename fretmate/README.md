@@ -1,6 +1,6 @@
-# String & Time
+# Fretmate
 
-A Flutter guitar tuner and metronome for Android 15 and newer. Organization: `id.steveimm`. Application ID: `id.steveimm.string_and_time`.
+A Flutter guitar tuner and metronome for Android 15 and newer. Organization: `id.steveimm`. Application ID: `id.steveimm.fretmate`.
 
 ## Features
 
@@ -59,7 +59,7 @@ The debug APK will be under `build/app/outputs/flutter-apk/`. Release signing cu
 - `lib/audio/pitch_detector.dart`: PCM16 framing and YIN pitch detection. Each 2,048-sample frame is analyzed in a background Dart isolate, with backpressure to avoid queued stale frames.
 - `lib/audio/audio_services.dart`: microphone capture through [`record`](https://pub.dev/packages/record) and the Android metronome channel.
 - `lib/audio/click_track.dart`: generated PCM clicks, bar construction, and tap tempo. Tempo changes restart the bar. No audio assets are required.
-- `android/app/src/main/kotlin/id/steveimm/string_and_time/MetronomeAudio.kt`: an Android [`AudioTrack`](https://developer.android.com/reference/android/media/AudioTrack) static buffer loop, playback-position beat callbacks, and [audio focus handling](https://developer.android.com/media/optimize/audio-focus). Click timing is driven by audio frames. Visual callbacks can lag with device output latency.
+- `android/app/src/main/kotlin/id/steveimm/fretmate/MetronomeAudio.kt`: an Android [`AudioTrack`](https://developer.android.com/reference/android/media/AudioTrack) static buffer loop, playback-position beat callbacks, and [audio focus handling](https://developer.android.com/media/optimize/audio-focus). Click timing is driven by audio frames. Visual callbacks can lag with device output latency.
 - `test/`: synthetic guitar pitch signals with harmonics/noise/detuning, PCM chunk boundaries, click timing and accents, tap tempo, audio failures, cancellation races, and widget controls/layouts. Device audio is replaced with fakes in these tests.
 
 ## Remaining device checks

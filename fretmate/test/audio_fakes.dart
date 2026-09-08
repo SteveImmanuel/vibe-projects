@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:string_and_time/audio/audio_services.dart';
+import 'package:fretmate/audio/audio_services.dart';
 
 class FakeMicrophone implements MicrophoneInput {
   final stream = StreamController<Uint8List>.broadcast();

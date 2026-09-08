@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:string_and_time/audio/click_track.dart';
+import 'package:fretmate/audio/click_track.dart';
 
 void main() {
   test('audio loop has evenly spaced clicks at slow, fractional and fast tempos', () {

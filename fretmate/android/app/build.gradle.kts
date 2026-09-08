@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "id.steveimm.string_and_time"
+    namespace = "id.steveimm.fretmate"
     compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
@@ -15,7 +15,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "id.steveimm.string_and_time"
+        applicationId = "id.steveimm.fretmate"
         minSdk = 35
         targetSdk = 36
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
