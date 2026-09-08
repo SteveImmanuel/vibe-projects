@@ -8,12 +8,16 @@ import { Debouncer, SerialQueue } from './async';
 import {
   FILTER_DEBOUNCE_MS,
   MAX_INITIALIZATION_CHANGE_ROUNDS,
+  MAX_REVIEW_RETRIES,
+  RECONCILE_INTERVAL_MS,
   REVIEW_DEBOUNCE_MS,
+  REVIEW_RETRY_DELAY_MS,
 } from './constants';
 import { BaselineService } from './baselineService';
 import { ChangeTracker, TrackedChange } from './changeTracker';
 import { FilterService } from './filterService';
 import { isFileNotFound } from './fileSnapshot';
+import { FileReconciler } from './fileReconciler';
 import { ReviewManager } from './reviewManager';
 import type { Resolution } from './types';
 
@@ -25,6 +29,10 @@ export class TrackingController implements vscode.Disposable {
   private initializationPromise: Promise<boolean> | undefined;
   private readonly reviewDebounce = new Debouncer(REVIEW_DEBOUNCE_MS);
   private readonly filterDebounce = new Debouncer(FILTER_DEBOUNCE_MS);
+  private readonly retryDebounce = new Debouncer(REVIEW_RETRY_DELAY_MS);
+  private readonly reconcileDebounce = new Debouncer(RECONCILE_INTERVAL_MS);
+  private readonly reconciler: FileReconciler;
+  private reviewRetries = 0;
   private filtersDirty = false;
   private appliedInclusion: (uri: vscode.Uri) => boolean = () => false;
   private readonly disposables: vscode.Disposable[] = [];
@@ -38,6 +46,7 @@ export class TrackingController implements vscode.Disposable {
     private readonly changes: ChangeTracker,
     private readonly reviews: ReviewManager
   ) {
+    this.reconciler = new FileReconciler(baselines, captures, filters, changes, reviews);
     this.disposables.push(
       changes.onDidChangeTrackedFiles(() => {
         this.scheduleReview();
@@ -79,27 +88,32 @@ export class TrackingController implements vscode.Disposable {
     this.generation++;
     this.reviewDebounce.cancel();
     this.filterDebounce.cancel();
+    this.retryDebounce.cancel();
+    this.reconcileDebounce.cancel();
     this.changes.stopTracking();
     this._onDidChangeState.fire();
 
     await this.operations.run(async () => {
       this.reviews.clearReview();
+      this.reconciler.clear();
       await this.baselines.deleteSessionStore();
       this._onDidChangeState.fire();
     });
   }
 
-  refreshReview(synchronizeFilters = true): Promise<number> {
+  refreshReview(rescan = true): Promise<number> {
     const generation = this.generation;
     return this.operations.run(async () => {
       if (!this.changes.isTracking() || this.isCancelled(generation)) {
         return this.reviews.getPendingHunks().length;
       }
-      if (synchronizeFilters) {
+      if (rescan) {
+        this.reviewRetries = 0;
         await this.flushFilters(generation);
         if (this.isCancelled(generation)) {
           return this.reviews.getPendingHunks().length;
         }
+        await this.reconciler.reconcile(true, () => this.isCancelled(generation));
       }
       return this.refreshPending(generation);
     });
@@ -128,6 +142,7 @@ export class TrackingController implements vscode.Disposable {
       if (this.isCancelled(generation)) {
         return;
       }
+      await this.reconciler.reconcile(true, () => this.isCancelled(generation));
       await this.refreshPending(generation);
       if (!this.isCancelled(generation)) {
         await this.reviews.resolveAll(resolution);
@@ -156,6 +171,9 @@ export class TrackingController implements vscode.Disposable {
     this.generation++;
     this.reviewDebounce.cancel();
     this.filterDebounce.cancel();
+    this.retryDebounce.cancel();
+    this.reconcileDebounce.cancel();
+    this.reconciler.clear();
     for (const disposable of this.disposables) {
       disposable.dispose();
     }
@@ -167,6 +185,8 @@ export class TrackingController implements vscode.Disposable {
 
     try {
       this.reviews.clearReview();
+      this.reconciler.clear();
+      this.reviewRetries = 0;
       this.filtersDirty = false;
       this.appliedInclusion = this.filters.captureInclusion();
       await this.baselines.clearBaselines();
@@ -211,6 +231,7 @@ export class TrackingController implements vscode.Disposable {
         throw new CaptureCancelledError();
       }
       this._onDidChangeState.fire();
+      this.scheduleReconciliation(generation);
       console.log(
         `[Cherry Diff] ${this.baselines.getBaselineCount()} baselines ready.`
       );
@@ -428,6 +449,7 @@ export class TrackingController implements vscode.Disposable {
     if (!this.changes.isTracking()) {
       return;
     }
+    this.reviewRetries = 0;
     this.reviewDebounce.schedule(() => {
       void this.refreshReview(false).catch((error) => {
         this.reportOperationError('refresh the review', error);
@@ -436,11 +458,47 @@ export class TrackingController implements vscode.Disposable {
   }
 
   private async refreshPending(generation: number): Promise<number> {
-    await this.expandDirectoryChanges(generation);
-    if (!this.isCancelled(generation)) {
-      return this.reviews.refreshDirty();
+    try {
+      await this.expandDirectoryChanges(generation);
+      if (!this.isCancelled(generation)) {
+        return await this.reviews.refreshDirty();
+      }
+      return this.reviews.getPendingHunks().length;
+    } finally {
+      if (!this.isCancelled(generation) && this.changes.getChanges().length > 0) {
+        if (this.reviewRetries < MAX_REVIEW_RETRIES) {
+          this.reviewRetries++;
+          this.retryDebounce.schedule(() => {
+            void this.refreshReview(false).catch((error) => this.reportOperationError('retry the review', error));
+          });
+        }
+      } else {
+        this.retryDebounce.cancel();
+        this.reviewRetries = 0;
+      }
     }
-    return this.reviews.getPendingHunks().length;
+  }
+
+  private scheduleReconciliation(generation: number): void {
+    if (this.isCancelled(generation)) {
+      return;
+    }
+    this.reconcileDebounce.schedule(() => {
+      void this.operations.run(async () => {
+        if (!this.isCancelled(generation)) {
+          await this.flushFilters(generation);
+          if (this.isCancelled(generation)) {
+            return;
+          }
+          await this.reconciler.reconcile(false, () => this.isCancelled(generation));
+          await this.refreshPending(generation);
+        }
+      }).catch((error) => {
+        if (!this.isCancelled(generation)) {
+          this.reportOperationError('check for missed file changes', error);
+        }
+      }).finally(() => this.scheduleReconciliation(generation));
+    });
   }
 
   private isCancelled(generation: number): boolean {

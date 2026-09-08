@@ -255,7 +255,7 @@ function buildExcludePattern(
   return `{${patterns.join(',')}}`;
 }
 
-function getCaptureConcurrency(): number {
+export function getCaptureConcurrency(): number {
   const configured = vscode.workspace
     .getConfiguration('cherryDiff')
     .get<number>(

@@ -6,6 +6,9 @@ export const MAX_TEXT_DIFF_BYTES = 5 * 1024 * 1024;
 export const MAX_DIFF_EDIT_LENGTH = 1_000;
 
 export const REVIEW_DEBOUNCE_MS = 800;
+export const REVIEW_RETRY_DELAY_MS = 800;
+export const MAX_REVIEW_RETRIES = 3;
+export const RECONCILE_INTERVAL_MS = 10_000;
 export const FILTER_DEBOUNCE_MS = 300;
 export const FILTER_TREE_REFRESH_DEBOUNCE_MS = 500;
 export const DIFF_SCROLL_DELAY_MS = 200;

@@ -6,6 +6,9 @@
 - Filter changes preserve pending new files and capture baselines only for newly included paths
 - Folder create/delete events reach included children even when the folder itself does not match the filters
 - Coalesced folder deletion and recreation still review replacement contents
+- Periodic metadata checks recover missed filesystem events, including watcher-excluded paths
+- Refresh Review and bulk resolution rescan included files instead of relying solely on recorded events
+- Unstable review reads receive bounded automatic retries, cancelled when tracking stops
 
 ## [0.7.1]
 

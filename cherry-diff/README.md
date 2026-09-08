@@ -27,6 +27,10 @@ Cherry Diff captures a baseline snapshot of every tracked file when you press **
 
 Keyboard: `Alt+]` / `Alt+[` jump to the next / previous pending hunk while a review is active.
 
+While tracking, Cherry Diff checks included files every 10 seconds for creations, deletions, or metadata changes missed by VS Code's file watcher, including events suppressed by `files.watcherExclude`. Normal editor and filesystem events still update reviews after an 800 ms debounce. Unstable reads receive up to three automatic retries.
+
+**Refresh Review** rescans included files and compares their contents with the baselines. Use it for an immediate check or when an external tool preserves both file size and timestamps. Bulk Accept All and Reject All also rescan before resolving changes. Large workspaces may take longer to scan.
+
 ## Choosing what is tracked
 
 - `cherryDiff.includePaths` / `cherryDiff.excludePaths` hold glob patterns. The defaults include everything and exclude the usual noise (`node_modules`, build output, lockfiles, VCS metadata, minified assets, …).

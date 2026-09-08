@@ -14,7 +14,7 @@ Core principles:
 
 ## Current development state
 
-The package version is `0.7.1`. Unreleased fixes preserve new-file reviews during filter synchronization and handle folder events before filtering their children.
+The package version is `0.7.1`. Unreleased fixes add missed-event recovery, preserve new-file reviews during filter synchronization, and handle folder events before filtering their children.
 
 Implemented behavior:
 
@@ -43,6 +43,7 @@ src/
 ├── baselineService.ts          Disk-backed snapshot index and blob storage
 ├── fileSnapshot.ts             Stable byte reads and UTF-8/BOM classification
 ├── changeTracker.ts            Revisioned editor/filesystem events
+├── fileReconciler.ts           Missed-event discovery and bounded metadata checks
 ├── filterService.ts            Cached glob matching and workspace-scoped overrides
 ├── filterTreeProvider.ts       Tracked Files checkbox tree
 ├── reviewManager.ts            Incremental review and accept/reject operations
@@ -61,7 +62,7 @@ test/
 └── reviewManager.test.js
 ```
 
-`trackingController.test.js` covers operation ordering. `trackingRecovery.test.js` uses the shared in-memory workspace in `test/helpers/workspace.js` to cover directory events, filter synchronization, and filtered descendants.
+`trackingController.test.js` covers operation ordering. `trackingRecovery.test.js` uses the shared in-memory workspace in `test/helpers/workspace.js` to cover missed events, filter synchronization, retries, and cancellation.
 
 ## Core invariants
 
@@ -105,6 +106,9 @@ Binary and unsupported files receive one whole-file review hunk. They are never 
 - If the file changed after review preparation, the operation is refused and the review is refreshed.
 - Failed edits or deletions leave the review pending.
 - Create/delete events retain their structural origin when coalesced and reach directory expansion before file inclusion checks.
+- Every 10 seconds, reconciliation discovers included files and compares metadata. Unchanged metadata avoids repeated byte reads after the first scan.
+- Manual refresh and bulk resolution rescan included contents, including files whose size and timestamps have not changed.
+- Pending reads retry up to three times without another event. Stop Tracking cancels retries and reconciliation.
 
 ### Operation serialization
 
